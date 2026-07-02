@@ -1,4 +1,5 @@
 mod books;
+mod discovery;
 mod install;
 mod jobs;
 mod opds;
@@ -61,6 +62,7 @@ pub fn page(title: &str, body: Markup) -> Markup {
                     nav {
                     a href="/" { "Library" }
                     a href="/discover" { "Discover" }
+                    a href="/following" { "Following" }
                     a href="/settings/plugins" { "Plugins" }
                 }
                 }
@@ -121,6 +123,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/read/{id}", get(reader::read))
         .route("/progress/{id}", post(reader::save_progress))
         .route("/opds", get(opds::feed))
+        .route("/following", get(discovery::following))
+        .route("/following/add", post(discovery::follow_add))
+        .route("/following/remove", post(discovery::follow_remove))
+        .route("/following/import", post(discovery::import_list))
         .route("/settings/plugins", get(install::plugins_page))
         .route("/settings/plugins/install", post(install::install))
         .route("/settings/plugins/uninstall", post(install::uninstall_handler))

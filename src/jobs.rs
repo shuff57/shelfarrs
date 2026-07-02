@@ -86,6 +86,11 @@ async fn run(state: &AppState, job: &Job) -> Result<()> {
             let cand: crate::source::Candidate = serde_json::from_str(&job.payload)?;
             crate::books::download_and_import(state, &cand).await
         }
+        "acquire" => {
+            let v: serde_json::Value = serde_json::from_str(&job.payload)?;
+            let query = v.get("query").and_then(|q| q.as_str()).unwrap_or_default();
+            crate::discovery::acquire(state, query).await
+        }
         other => anyhow::bail!("unknown job kind: {other}"),
     }
 }
