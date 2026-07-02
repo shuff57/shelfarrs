@@ -1,3 +1,4 @@
+mod auth;
 mod books;
 mod discovery;
 mod install;
@@ -64,6 +65,7 @@ pub fn page(title: &str, body: Markup) -> Markup {
                     a href="/discover" { "Discover" }
                     a href="/following" { "Following" }
                     a href="/settings/plugins" { "Plugins" }
+                    a href="/settings/users" { "Account" }
                 }
                 }
                 main { (body) }
@@ -85,6 +87,7 @@ async fn main() -> anyhow::Result<()> {
     let db_url = format!("sqlite:{data_dir}/shelfarr.db?mode=rwc");
     let pool: SqlitePool = SqlitePoolOptions::new().connect(&db_url).await?;
     sqlx::migrate!().run(&pool).await?;
+    auth::bootstrap_admin(&pool).await?;
 
     let books_dir = PathBuf::from(std::env::var("BOOKS_DIR").unwrap_or_else(|_| "books".into()));
     std::fs::create_dir_all(&books_dir)?;
@@ -132,9 +135,21 @@ async fn main() -> anyhow::Result<()> {
         .route("/settings/plugins/uninstall", post(install::uninstall_handler))
         .route("/settings/plugins/repos/add", post(install::repos_add))
         .route("/settings/plugins/repos/remove", post(install::repos_remove))
+        .route("/settings/users", get(auth::users_page))
+        .route("/settings/users/add", post(auth::user_add))
+        .route("/settings/users/remove", post(auth::user_remove))
+        .route("/login", get(auth::login_page).post(auth::login))
+        .route("/logout", get(auth::logout))
         .route("/healthz", get(|| async { "ok" }))
         .nest_service("/assets", ServeDir::new("assets"))
         .nest_service("/plugins", ServeDir::new(state.plugins_dir.clone()))
+        .layer({
+            let mw = state.clone();
+            axum::middleware::from_fn(move |req, next| {
+                let st = mw.clone();
+                async move { auth::gate(st, req, next).await }
+            })
+        })
         .with_state(state);
 
     let addr = std::env::var("BIND").unwrap_or_else(|_| "0.0.0.0:8080".into());

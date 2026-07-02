@@ -2,19 +2,24 @@
 //! server-backed progress) to whichever viewer plugin handles the book's format,
 //! plus the `/progress/:id` store. The reader plugin writes zero backend code.
 
+use crate::auth::CurrentUser;
 use crate::plugin::viewer_for;
 use crate::{page, AppState};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{Html, IntoResponse, Response},
-    Json,
+    Extension, Json,
 };
 use maud::{html, PreEscaped};
 use sqlx::Row;
 
 /// GET /read/:id — render the viewer for this book.
-pub async fn read(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+pub async fn read(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(id): Path<i64>,
+) -> Response {
     let row = sqlx::query("SELECT title, format FROM books WHERE id=?")
         .bind(id)
         .fetch_optional(&state.pool)
@@ -39,7 +44,8 @@ pub async fn read(State(state): State<AppState>, Path(id): Path<i64>) -> Respons
     let ui = viewer.ui.expect("viewer_for guarantees ui");
 
     // Server-inject the saved position so the viewer resumes without a round-trip.
-    let saved: Option<String> = sqlx::query("SELECT position_json FROM progress WHERE user='default' AND book=?")
+    let saved: Option<String> = sqlx::query("SELECT position_json FROM progress WHERE user=? AND book=?")
+        .bind(&user.0)
         .bind(id)
         .fetch_optional(&state.pool)
         .await
@@ -91,17 +97,19 @@ pub struct ProgressBody {
 /// POST /progress/:id — upsert the reading position for the single user.
 pub async fn save_progress(
     State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
     Path(id): Path<i64>,
     Json(b): Json<ProgressBody>,
 ) -> Response {
     let pos = b.position.to_string();
     let res = sqlx::query(
         "INSERT INTO progress (user, book, viewer, position_json, percent, updated_at)
-         VALUES ('default', ?, ?, ?, ?, datetime('now'))
+         VALUES (?, ?, ?, ?, ?, datetime('now'))
          ON CONFLICT(user, book) DO UPDATE SET
            viewer=excluded.viewer, position_json=excluded.position_json,
            percent=excluded.percent, updated_at=datetime('now')",
     )
+    .bind(&user.0)
     .bind(id)
     .bind(&b.viewer)
     .bind(&pos)
