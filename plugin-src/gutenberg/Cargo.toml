@@ -2,7 +2,7 @@
 name = "gutenberg-plugin"
 version = "1.0.0"
 edition = "2021"
-description = "Project Gutenberg source plugin for shelfarr-rs (compiles to WASM)"
+description = "Project Gutenberg source plugin for shelfarrs (compiles to WASM)"
 
 [lib]
 crate-type = ["cdylib"]

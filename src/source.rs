@@ -1,4 +1,4 @@
-//! Host-side acquisition seam. The types live in `shelfarr-sdk` (shared with
+//! Host-side acquisition seam. The types live in `shelfarrs-sdk` (shared with
 //! plugins); this trait is what the job runner calls, implemented by `WasmSource`.
 
 use anyhow::Result;

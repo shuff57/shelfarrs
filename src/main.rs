@@ -1,6 +1,7 @@
 mod books;
 mod install;
 mod jobs;
+mod opds;
 mod plugin;
 mod reader;
 mod source;
@@ -119,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/books/{id}/file", get(books::book_file))
         .route("/read/{id}", get(reader::read))
         .route("/progress/{id}", post(reader::save_progress))
+        .route("/opds", get(opds::feed))
         .route("/settings/plugins", get(install::plugins_page))
         .route("/settings/plugins/install", post(install::install))
         .route("/settings/plugins/uninstall", post(install::uninstall_handler))

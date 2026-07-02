@@ -1,0 +1,10 @@
+{
+  "id": "pdf",
+  "name": "PDF Reader",
+  "version": "1.0.0",
+  "kind": "viewer",
+  "ui": { "js": "ui/pdf.js", "css": null, "formats": ["pdf"] },
+  "capabilities": [],
+  "author": "shelfarrs",
+  "description": "Renders PDF documents page by page (pdf.js)."
+}

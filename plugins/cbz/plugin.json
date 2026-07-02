@@ -1,0 +1,10 @@
+{
+  "id": "cbz",
+  "name": "Comic Reader",
+  "version": "1.0.0",
+  "kind": "viewer",
+  "ui": { "js": "ui/cbz.js", "css": null, "formats": ["cbz"] },
+  "capabilities": [],
+  "author": "shelfarrs",
+  "description": "Reads .cbz comic archives (zip of images) page by page."
+}

@@ -66,3 +66,12 @@ h2 { margin-top: 2rem; color: #c3cad4; font-size: 1.1rem; }
 .repos li { display: flex; align-items: center; gap: .5rem; padding: .3rem 0; }
 form.inline { display: inline; }
 .fmt { font-size: .7rem; text-transform: uppercase; color: #e8b64c; letter-spacing: .5px; }
+
+/* Generic /read chrome — core owns it; viewer plugins style only their content. */
+.reader-wrap { position: fixed; inset: 56px 0 0 0; display: flex; flex-direction: column; background: #1a1d23; }
+#viewer { flex: 1; min-height: 0; overflow: auto; text-align: center; }
+.reader-wrap .nav { display: flex; justify-content: space-between; padding: .5rem 1rem; background: #1b1f26; }
+.reader-wrap .nav button { font-size: 1.4rem; line-height: 1; padding: .2rem 1.2rem; background: #2a63a8; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+.reader-wrap .nav button:hover { background: #3574c0; }
+/* Image/canvas viewers (cbz, pdf) render a centered page. */
+.cbz-page, #viewer canvas { max-width: 100%; height: auto; margin: 0 auto; display: block; box-shadow: 0 0 20px rgba(0,0,0,.5); }
