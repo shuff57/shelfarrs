@@ -1,0 +1,19 @@
+/* ponytail: hand-written minimal CSS. Swap in Tailwind (standalone CLI, no node)
+   once there's real UI to style in phase 1+. */
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font: 16px/1.5 system-ui, sans-serif;
+  background: #14171c;
+  color: #d7dbe0;
+}
+.topbar {
+  padding: 0.75rem 1.25rem;
+  background: #1b1f26;
+  border-bottom: 1px solid #2a2f38;
+}
+.brand { color: #e8b64c; font-weight: 700; text-decoration: none; letter-spacing: .3px; }
+main { max-width: 960px; margin: 0 auto; padding: 2rem 1.25rem; }
+.empty { text-align: center; padding: 4rem 1rem; color: #8a93a0; }
+.empty h1 { color: #d7dbe0; font-weight: 600; }
