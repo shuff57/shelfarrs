@@ -1,5 +1,5 @@
 [package]
-name = "shelfarr-sdk"
+name = "shelfarrs-sdk"
 version = "0.0.0"
 edition = "2021"
 description = "Shared plugin ABI types for shelfarr-rs (host + plugins depend on this)"

@@ -2545,7 +2545,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "shelfarr-rs"
+name = "shelfarrs"
 version = "0.0.0"
 dependencies = [
  "anyhow",
@@ -2557,7 +2557,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "shelfarr-sdk",
+ "shelfarrs-sdk",
  "sqlx",
  "tokio",
  "tower",
@@ -2569,7 +2569,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "shelfarr-sdk"
+name = "shelfarrs-sdk"
 version = "0.0.0"
 dependencies = [
  "serde",

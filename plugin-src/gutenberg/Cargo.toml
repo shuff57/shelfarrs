@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 extism-pdk = "1"
-shelfarr-sdk = { path = "../../crates/sdk" }
+shelfarrs-sdk = { path = "../../crates/sdk" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

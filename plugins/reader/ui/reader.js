@@ -1,4 +1,4 @@
-// Flagship epub viewer. Self-registers against window.Shelfarr and renders with
+// Flagship epub viewer. Self-registers against window.Shelfarrs and renders with
 // epub.js. Pulls its own vendored deps so the core /read page stays generic.
 (function () {
   function loadScript(src) {
@@ -15,7 +15,7 @@
     await loadScript("/plugins/reader/ui/vendor/jszip.min.js");
     await loadScript("/plugins/reader/ui/vendor/epub.min.js");
 
-    window.Shelfarr.registerViewer({
+    window.Shelfarrs.registerViewer({
       id: "reader",
       formats: ["epub"],
       async mount(el, ctx) {

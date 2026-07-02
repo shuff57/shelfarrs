@@ -10,7 +10,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use extism::{convert::Json, host_fn, Manifest as ExtismManifest, Plugin, PluginBuilder, UserData, ValType, Wasm};
 use serde::Deserialize;
-use shelfarr_sdk::{Candidate, Download, HttpRequest, HttpResponse, SearchQuery};
+use shelfarrs_sdk::{Candidate, Download, HttpRequest, HttpResponse, SearchQuery};
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;

@@ -2,7 +2,7 @@
 //! to the host's `http_fetch` — the plugin itself gets no socket.
 
 use serde_json::Value;
-use shelfarr_sdk::Candidate;
+use shelfarrs_sdk::Candidate;
 
 // The extism glue references host imports that exist only in the WASM runtime, so
 // gate it out of host-target test builds. The pure parsing logic below stays testable.
@@ -11,7 +11,7 @@ mod wasm {
     use super::{parse_gutendex, urlencoding};
     use extism_pdk::*;
     use serde_json::Value;
-    use shelfarr_sdk::{Candidate, Download, HttpRequest, HttpResponse, SearchQuery};
+    use shelfarrs_sdk::{Candidate, Download, HttpRequest, HttpResponse, SearchQuery};
 
     #[host_fn]
     extern "ExtismHost" {

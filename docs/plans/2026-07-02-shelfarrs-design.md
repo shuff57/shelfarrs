@@ -1,4 +1,4 @@
-# shelfarr-rs — design (working name)
+# shelfarrs — design (working name)
 
 > Clean-room Rust rewrite of the Shelfarr ebook hub, built around a first-class,
 > sandboxed **plugin ecosystem**. Single static binary, Dockerable, self-hosted on

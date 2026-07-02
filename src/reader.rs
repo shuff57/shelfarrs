@@ -1,4 +1,4 @@
-//! The viewer seam: a `/read/:id` page that wires `window.Shelfarr` (fileUrl +
+//! The viewer seam: a `/read/:id` page that wires `window.Shelfarrs` (fileUrl +
 //! server-backed progress) to whichever viewer plugin handles the book's format,
 //! plus the `/progress/:id` store. The reader plugin writes zero backend code.
 
@@ -49,7 +49,7 @@ pub async fn read(State(state): State<AppState>, Path(id): Path<i64>) -> Respons
     let saved_js = saved.unwrap_or_else(|| "null".into());
 
     let bootstrap = format!(
-        r#"window.Shelfarr = {{
+        r#"window.Shelfarrs = {{
   book: {{ id: {id}, format: {format:?}, fileUrl: "/books/{id}/file" }},
   saved: {saved_js},
   registerViewer(v) {{

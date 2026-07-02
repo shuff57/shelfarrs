@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-pub use shelfarr_sdk::{Candidate, Download, SearchQuery};
+pub use shelfarrs_sdk::{Candidate, Download, SearchQuery};
 
 #[async_trait]
 pub trait Source: Send + Sync {

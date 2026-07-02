@@ -1,5 +1,5 @@
 [package]
-name = "shelfarr-rs"
+name = "shelfarrs"
 version = "0.0.0"
 edition = "2021"
 description = "Self-hosted ebook hub with a sandboxed plugin ecosystem (working name)"
@@ -9,7 +9,7 @@ members = ["crates/sdk"]
 exclude = ["plugin-src"]
 
 [dependencies]
-shelfarr-sdk = { path = "crates/sdk" }
+shelfarrs-sdk = { path = "crates/sdk" }
 extism = "1"
 ureq = "2"
 axum = "0.8"

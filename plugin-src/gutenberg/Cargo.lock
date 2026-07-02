@@ -117,7 +117,7 @@ dependencies = [
  "extism-pdk",
  "serde",
  "serde_json",
- "shelfarr-sdk",
+ "shelfarrs-sdk",
 ]
 
 [[package]]
@@ -313,7 +313,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "shelfarr-sdk"
+name = "shelfarrs-sdk"
 version = "0.0.0"
 dependencies = [
  "serde",

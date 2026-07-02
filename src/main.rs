@@ -50,13 +50,13 @@ pub fn page(title: &str, body: Markup) -> Markup {
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
-                title { (title) " · Shelfarr" }
+                title { (title) " · Shelfarrs" }
                 link rel="stylesheet" href="/assets/style.css";
                 script src="/assets/htmx.min.js" {}
             }
             body {
                 header .topbar {
-                    a href="/" .brand { "Shelfarr" }
+                    a href="/" .brand { "Shelfarrs" }
                     nav {
                     a href="/" { "Library" }
                     a href="/discover" { "Discover" }
@@ -87,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&books_dir)?;
 
     let http = reqwest::Client::builder()
-        .user_agent("shelfarr-rs/0.0")
+        .user_agent("shelfarrs/0.0")
         .connect_timeout(std::time::Duration::from_secs(15))
         .timeout(std::time::Duration::from_secs(300))
         .build()?;
