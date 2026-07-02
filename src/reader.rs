@@ -45,7 +45,7 @@ pub async fn read(
 
     // Server-inject the saved position so the viewer resumes without a round-trip.
     let saved: Option<String> = sqlx::query("SELECT position_json FROM progress WHERE user=? AND book=?")
-        .bind(&user.0)
+        .bind(&user.username)
         .bind(id)
         .fetch_optional(&state.pool)
         .await
@@ -109,7 +109,7 @@ pub async fn save_progress(
            viewer=excluded.viewer, position_json=excluded.position_json,
            percent=excluded.percent, updated_at=datetime('now')",
     )
-    .bind(&user.0)
+    .bind(&user.username)
     .bind(id)
     .bind(&b.viewer)
     .bind(&pos)

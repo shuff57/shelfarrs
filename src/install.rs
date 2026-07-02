@@ -2,13 +2,14 @@
 //! (verify sha256 -> SafeExtract -> atomic move -> hot reload), and uninstall.
 //! Zero downtime — a WASM source re-instantiates live, a viewer serves next open.
 
+use crate::auth::{deny_non_admin, CurrentUser};
 use crate::plugin::{scan_installed, PluginManifest};
 use crate::{page, AppState};
 use anyhow::{anyhow, bail, Context, Result};
 use axum::{
     extract::State,
     response::{Html, IntoResponse, Redirect, Response},
-    Form,
+    Extension, Form,
 };
 use maud::html;
 use serde::Deserialize;
@@ -284,7 +285,14 @@ pub struct UrlForm {
     pub url: String,
 }
 
-pub async fn install(State(state): State<AppState>, Form(f): Form<IdForm>) -> Html<String> {
+pub async fn install(
+    State(state): State<AppState>,
+    Extension(me): Extension<CurrentUser>,
+    Form(f): Form<IdForm>,
+) -> Response {
+    if !me.is_admin {
+        return (axum::http::StatusCode::FORBIDDEN, "admin only").into_response();
+    }
     // Find the entry across configured repos.
     let repos = repo_urls(&state).await;
     let mut found = None;
@@ -297,22 +305,36 @@ pub async fn install(State(state): State<AppState>, Form(f): Form<IdForm>) -> Ht
         }
     }
     let Some(entry) = found else {
-        return Html("<span class=\"err\">Not found in any repository</span>".into());
+        return Html("<span class=\"err\">Not found in any repository</span>".to_string()).into_response();
     };
     match install_entry(&state, &entry).await {
-        Ok(_) => Html(format!("<span class=\"queued\">Installed {} ✓</span>", entry.id)),
-        Err(e) => Html(format!("<span class=\"err\">Install failed: {e}</span>")),
+        Ok(_) => Html(format!("<span class=\"queued\">Installed {} ✓</span>", entry.id)).into_response(),
+        Err(e) => Html(format!("<span class=\"err\">Install failed: {e}</span>")).into_response(),
     }
 }
 
-pub async fn uninstall_handler(State(state): State<AppState>, Form(f): Form<IdForm>) -> Html<String> {
+pub async fn uninstall_handler(
+    State(state): State<AppState>,
+    Extension(me): Extension<CurrentUser>,
+    Form(f): Form<IdForm>,
+) -> Response {
+    if let Some(r) = deny_non_admin(&me) {
+        return r;
+    }
     match uninstall(&state, &f.id) {
-        Ok(_) => Html(format!("<span class=\"queued\">Uninstalled {} ✓</span>", f.id)),
-        Err(e) => Html(format!("<span class=\"err\">Uninstall failed: {e}</span>")),
+        Ok(_) => Html(format!("<span class=\"queued\">Uninstalled {} ✓</span>", f.id)).into_response(),
+        Err(e) => Html(format!("<span class=\"err\">Uninstall failed: {e}</span>")).into_response(),
     }
 }
 
-pub async fn repos_add(State(state): State<AppState>, Form(f): Form<UrlForm>) -> Response {
+pub async fn repos_add(
+    State(state): State<AppState>,
+    Extension(me): Extension<CurrentUser>,
+    Form(f): Form<UrlForm>,
+) -> Response {
+    if let Some(r) = deny_non_admin(&me) {
+        return r;
+    }
     let mut urls = repo_urls(&state).await;
     if !urls.contains(&f.url) {
         urls.push(f.url);
@@ -321,7 +343,14 @@ pub async fn repos_add(State(state): State<AppState>, Form(f): Form<UrlForm>) ->
     Redirect::to("/settings/plugins").into_response()
 }
 
-pub async fn repos_remove(State(state): State<AppState>, Form(f): Form<UrlForm>) -> Response {
+pub async fn repos_remove(
+    State(state): State<AppState>,
+    Extension(me): Extension<CurrentUser>,
+    Form(f): Form<UrlForm>,
+) -> Response {
+    if let Some(r) = deny_non_admin(&me) {
+        return r;
+    }
     let urls: Vec<String> = repo_urls(&state).await.into_iter().filter(|u| u != &f.url).collect();
     let _ = set_repo_urls(&state, &urls).await;
     (axum::http::StatusCode::OK, "removed").into_response()

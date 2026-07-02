@@ -10,7 +10,7 @@ use axum::{
     http::{header, StatusCode},
     middleware::Next,
     response::{Html, IntoResponse, Redirect, Response},
-    Form,
+    Extension, Form,
 };
 use base64::Engine;
 use maud::html;
@@ -20,7 +20,15 @@ use sqlx::{Row, SqlitePool};
 
 /// The authenticated user, injected into request extensions by the gate.
 #[derive(Clone)]
-pub struct CurrentUser(pub String);
+pub struct CurrentUser {
+    pub username: String,
+    pub is_admin: bool,
+}
+
+/// 403 unless the user is an admin. Guards privileged actions (user mgmt, plugin install).
+pub fn deny_non_admin(user: &CurrentUser) -> Option<Response> {
+    (!user.is_admin).then(|| (StatusCode::FORBIDDEN, "admin only").into_response())
+}
 
 fn hash_password(pw: &str) -> anyhow::Result<String> {
     let salt = SaltString::generate(&mut OsRng);
@@ -64,14 +72,17 @@ fn new_token() -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-async fn user_for_token(pool: &SqlitePool, token: &str) -> Option<String> {
-    sqlx::query("SELECT username FROM sessions WHERE token=?")
-        .bind(token)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()
-        .map(|r| r.get("username"))
+async fn user_for_token(pool: &SqlitePool, token: &str) -> Option<(String, bool)> {
+    let row = sqlx::query(
+        "SELECT u.username AS username, u.is_admin AS is_admin
+         FROM sessions s JOIN users u ON u.username = s.username WHERE s.token = ?",
+    )
+    .bind(token)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()?;
+    Some((row.get("username"), row.get::<i64, _>("is_admin") == 1))
 }
 
 fn cookie_token(req: &Request) -> Option<String> {
@@ -82,20 +93,20 @@ fn cookie_token(req: &Request) -> Option<String> {
     })
 }
 
-async fn basic_auth(pool: &SqlitePool, header: Option<String>) -> Option<String> {
+async fn basic_auth(pool: &SqlitePool, header: Option<String>) -> Option<(String, bool)> {
     let h = header?;
     let b64 = h.strip_prefix("Basic ")?;
     let decoded = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
     let s = String::from_utf8(decoded).ok()?;
     let (user, pass) = s.split_once(':')?;
-    let hash: String = sqlx::query("SELECT password_hash FROM users WHERE username=?")
+    let row = sqlx::query("SELECT password_hash, is_admin FROM users WHERE username=?")
         .bind(user)
         .fetch_optional(pool)
         .await
         .ok()
-        .flatten()
-        .map(|r| r.get("password_hash"))?;
-    verify_password(pass, &hash).then(|| user.to_string())
+        .flatten()?;
+    let hash: String = row.get("password_hash");
+    verify_password(pass, &hash).then(|| (user.to_string(), row.get::<i64, _>("is_admin") == 1))
 }
 
 /// The gate. Exempts /login, /assets, /healthz; accepts session cookie or HTTP Basic.
@@ -128,8 +139,8 @@ pub async fn gate(state: AppState, mut req: Request, next: Next) -> Response {
     };
 
     match user {
-        Some(u) => {
-            req.extensions_mut().insert(CurrentUser(u));
+        Some((username, is_admin)) => {
+            req.extensions_mut().insert(CurrentUser { username, is_admin });
             next.run(req).await
         }
         None => {
@@ -210,7 +221,19 @@ pub async fn logout(State(state): State<AppState>, req: Request) -> Response {
 
 // ---- admin: user management ----
 
-pub async fn users_page(State(state): State<AppState>) -> Html<String> {
+pub async fn users_page(
+    State(state): State<AppState>,
+    Extension(me): Extension<CurrentUser>,
+) -> Html<String> {
+    // Non-admins just see their own account + sign out — no user list, no controls.
+    if !me.is_admin {
+        let body = html! {
+            h1 { "Account" }
+            p { "Signed in as " strong { (me.username) } "." }
+            p style="margin-top:1rem" { a href="/logout" { "Sign out" } }
+        };
+        return Html(page("Account", body).into_string());
+    }
     let rows = sqlx::query("SELECT username, is_admin FROM users ORDER BY username")
         .fetch_all(&state.pool)
         .await
@@ -243,7 +266,14 @@ pub async fn users_page(State(state): State<AppState>) -> Html<String> {
     Html(page("Users", body).into_string())
 }
 
-pub async fn user_add(State(state): State<AppState>, Form(f): Form<LoginForm>) -> Response {
+pub async fn user_add(
+    State(state): State<AppState>,
+    Extension(me): Extension<CurrentUser>,
+    Form(f): Form<LoginForm>,
+) -> Response {
+    if let Some(r) = deny_non_admin(&me) {
+        return r;
+    }
     let u = f.username.trim();
     if u.is_empty() || f.password.is_empty() {
         return Redirect::to("/settings/users").into_response();
@@ -266,7 +296,14 @@ pub struct UserForm {
     pub username: String,
 }
 
-pub async fn user_remove(State(state): State<AppState>, Form(f): Form<UserForm>) -> Response {
+pub async fn user_remove(
+    State(state): State<AppState>,
+    Extension(me): Extension<CurrentUser>,
+    Form(f): Form<UserForm>,
+) -> Response {
+    if let Some(r) = deny_non_admin(&me) {
+        return r;
+    }
     if f.username != "admin" {
         let _ = sqlx::query("DELETE FROM users WHERE username=?").bind(&f.username).execute(&state.pool).await;
         let _ = sqlx::query("DELETE FROM sessions WHERE username=?").bind(&f.username).execute(&state.pool).await;
