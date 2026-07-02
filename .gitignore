@@ -5,3 +5,4 @@
 server.log
 *.db
 *.db-*
+/dist
