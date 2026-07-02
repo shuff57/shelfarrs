@@ -53,3 +53,16 @@ a { color: #6db3f2; }
 .err { color: #e06b6b; margin-left: auto; }
 .detail { max-width: 640px; }
 .detail .meta { color: #8a93a0; }
+
+h2 { margin-top: 2rem; color: #c3cad4; font-size: 1.1rem; }
+.muted { color: #6b7280; }
+.caps { color: #8a93a0; font-size: .85rem; margin-left: .5rem; }
+.result .caps { margin-left: auto; }
+.result .addform { margin-left: 1rem; }
+.btn.danger { background: #8a3a3a; }
+.btn.danger:hover { background: #a34747; }
+.link { background: none; border: 0; color: #6db3f2; cursor: pointer; font: inherit; padding: 0 .4rem; }
+.repos ul { list-style: none; padding: 0; }
+.repos li { display: flex; align-items: center; gap: .5rem; padding: .3rem 0; }
+form.inline { display: inline; }
+.fmt { font-size: .7rem; text-transform: uppercase; color: #e8b64c; letter-spacing: .5px; }

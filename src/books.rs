@@ -97,10 +97,11 @@ pub async fn scan_dir(state: &AppState) -> Result<usize> {
 
 /// Fetch a candidate's bytes (host does the networking), write into BOOKS_DIR, index it.
 pub async fn download_and_import(state: &AppState, cand: &Candidate) -> Result<()> {
-    let source = state
-        .sources
+    let sources = state.sources();
+    let source = sources
         .get(&cand.source)
-        .with_context(|| format!("unknown source: {}", cand.source))?;
+        .with_context(|| format!("unknown source: {}", cand.source))?
+        .clone();
     let dl = source.resolve_download(&cand.reference).await?;
 
     let bytes = if let Some(b) = dl.bytes {
@@ -233,7 +234,8 @@ pub async fn discover(State(state): State<AppState>, Query(dq): Query<DiscoverQ>
             text: query.clone(),
             format: None,
         };
-        for src in state.sources.values() {
+        let sources = state.sources();
+        for src in sources.values() {
             match src.search(&sq).await {
                 Ok(mut c) => candidates.append(&mut c),
                 Err(e) => tracing::warn!("search via {} failed: {e}", src.id()),

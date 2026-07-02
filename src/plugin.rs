@@ -210,12 +210,12 @@ pub fn viewer_for(plugins_dir: &Path, format: &str) -> Option<PluginManifest> {
         })
 }
 
+pub type SourceMap = HashMap<String, Arc<dyn Source>>;
+pub type KvStore = Arc<Mutex<HashMap<(String, String), String>>>;
+
 /// Instantiate all `kind:"source"` plugins found under `plugins_dir`.
-pub fn load_sources(
-    plugins_dir: &Path,
-    kv: Arc<Mutex<HashMap<(String, String), String>>>,
-) -> HashMap<String, Box<dyn Source>> {
-    let mut sources: HashMap<String, Box<dyn Source>> = HashMap::new();
+pub fn load_sources(plugins_dir: &Path, kv: KvStore) -> SourceMap {
+    let mut sources: SourceMap = HashMap::new();
     for inst in scan_installed(plugins_dir) {
         if inst.manifest.kind != "source" {
             continue;
@@ -228,7 +228,7 @@ pub fn load_sources(
         match WasmSource::load(&inst.manifest.id, &wasm_path, kv.clone()) {
             Ok(src) => {
                 tracing::info!("loaded source plugin: {} v{}", inst.manifest.id, inst.manifest.version);
-                sources.insert(inst.manifest.id.clone(), Box::new(src));
+                sources.insert(inst.manifest.id.clone(), Arc::new(src));
             }
             Err(e) => tracing::error!("failed to load {}: {e:#}", inst.manifest.id),
         }

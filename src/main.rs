@@ -1,4 +1,5 @@
 mod books;
+mod install;
 mod jobs;
 mod plugin;
 mod reader;
@@ -9,21 +10,36 @@ use axum::{
     Router,
 };
 use maud::{html, Markup, DOCTYPE};
-use source::Source;
+use plugin::{KvStore, SourceMap};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use tower_http::services::ServeDir;
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
-    pub sources: Arc<HashMap<String, Box<dyn Source>>>,
+    /// Hot-swappable source registry: clone the inner Arc under the lock, then use
+    /// it across awaits without holding the guard. Install/uninstall swaps it live.
+    pub sources: Arc<RwLock<Arc<SourceMap>>>,
+    pub kv: KvStore,
     pub books_dir: PathBuf,
     pub plugins_dir: PathBuf,
     pub http: reqwest::Client,
+}
+
+impl AppState {
+    /// Snapshot the current source registry (cheap Arc clone).
+    pub fn sources(&self) -> Arc<SourceMap> {
+        self.sources.read().unwrap().clone()
+    }
+    /// Rebuild the registry from disk after an install/uninstall — no restart.
+    pub fn reload_sources(&self) {
+        let map = plugin::load_sources(&self.plugins_dir, self.kv.clone());
+        *self.sources.write().unwrap() = Arc::new(map);
+    }
 }
 
 /// Wrap page chrome (nav + htmx) around body content.
@@ -41,7 +57,11 @@ pub fn page(title: &str, body: Markup) -> Markup {
             body {
                 header .topbar {
                     a href="/" .brand { "Shelfarr" }
-                    nav { a href="/" { "Library" } a href="/discover" { "Discover" } }
+                    nav {
+                    a href="/" { "Library" }
+                    a href="/discover" { "Discover" }
+                    a href="/settings/plugins" { "Plugins" }
+                }
                 }
                 main { (body) }
             }
@@ -75,12 +95,13 @@ async fn main() -> anyhow::Result<()> {
     // Load source plugins (WASM, sandboxed) from the plugins dir.
     let plugins_dir = PathBuf::from(std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "plugins".into()));
     std::fs::create_dir_all(&plugins_dir)?;
-    let kv = Arc::new(Mutex::new(HashMap::new()));
-    let sources = plugin::load_sources(&plugins_dir, kv);
+    let kv: KvStore = Arc::new(Mutex::new(HashMap::new()));
+    let sources = plugin::load_sources(&plugins_dir, kv.clone());
 
     let state = AppState {
         pool,
-        sources: Arc::new(sources),
+        sources: Arc::new(RwLock::new(Arc::new(sources))),
+        kv,
         books_dir,
         plugins_dir,
         http,
@@ -98,6 +119,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/books/{id}/file", get(books::book_file))
         .route("/read/{id}", get(reader::read))
         .route("/progress/{id}", post(reader::save_progress))
+        .route("/settings/plugins", get(install::plugins_page))
+        .route("/settings/plugins/install", post(install::install))
+        .route("/settings/plugins/uninstall", post(install::uninstall_handler))
+        .route("/settings/plugins/repos/add", post(install::repos_add))
+        .route("/settings/plugins/repos/remove", post(install::repos_remove))
         .route("/healthz", get(|| async { "ok" }))
         .nest_service("/assets", ServeDir::new("assets"))
         .nest_service("/plugins", ServeDir::new(state.plugins_dir.clone()))
