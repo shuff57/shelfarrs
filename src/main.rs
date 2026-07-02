@@ -74,6 +74,37 @@ pub fn page(title: &str, body: Markup) -> Markup {
     }
 }
 
+/// Copy bundled default plugins into the runtime (volume) dir, skipping any that
+/// already exist — so a redeploy adds new defaults without touching installed ones.
+fn seed_plugins(bundled: &std::path::Path, runtime: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(bundled) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let dest = runtime.join(e.file_name());
+        if e.path().is_dir() && !dest.exists() {
+            if let Err(err) = copy_dir(&e.path(), &dest) {
+                tracing::warn!("could not seed plugin {}: {err}", e.file_name().to_string_lossy());
+            } else {
+                tracing::info!("seeded default plugin: {}", e.file_name().to_string_lossy());
+            }
+        }
+    }
+}
+
+fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for e in std::fs::read_dir(src)?.flatten() {
+        let (from, to) = (e.path(), dst.join(e.file_name()));
+        if from.is_dir() {
+            copy_dir(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -82,6 +113,9 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    // All mutable state lives under DATA_DIR so a single persistent volume mount
+    // preserves the DB (progress/users/config), downloaded books, and installed
+    // plugins across image rebuilds/redeploys.
     let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "data".into());
     std::fs::create_dir_all(&data_dir)?;
     let db_url = format!("sqlite:{data_dir}/shelfarr.db?mode=rwc");
@@ -89,7 +123,8 @@ async fn main() -> anyhow::Result<()> {
     sqlx::migrate!().run(&pool).await?;
     auth::bootstrap_admin(&pool).await?;
 
-    let books_dir = PathBuf::from(std::env::var("BOOKS_DIR").unwrap_or_else(|_| "books".into()));
+    let books_dir =
+        PathBuf::from(std::env::var("BOOKS_DIR").unwrap_or_else(|_| format!("{data_dir}/books")));
     std::fs::create_dir_all(&books_dir)?;
 
     let http = reqwest::Client::builder()
@@ -98,9 +133,16 @@ async fn main() -> anyhow::Result<()> {
         .timeout(std::time::Duration::from_secs(300))
         .build()?;
 
-    // Load source plugins (WASM, sandboxed) from the plugins dir.
-    let plugins_dir = PathBuf::from(std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "plugins".into()));
+    // Plugins live on the volume too. Seed the read-only bundled defaults
+    // (SEED_PLUGINS_DIR, baked into the image) per-plugin-if-missing: installed
+    // third-party plugins are never touched, and updates add new defaults.
+    // ponytail: a removed default re-seeds on restart — drop it from the image to remove permanently.
+    let plugins_dir =
+        PathBuf::from(std::env::var("PLUGINS_DIR").unwrap_or_else(|_| format!("{data_dir}/plugins")));
     std::fs::create_dir_all(&plugins_dir)?;
+    if let Ok(seed) = std::env::var("SEED_PLUGINS_DIR") {
+        seed_plugins(std::path::Path::new(&seed), &plugins_dir);
+    }
     let kv: KvStore = Arc::new(Mutex::new(HashMap::new()));
     let sources = plugin::load_sources(&plugins_dir, kv.clone());
 

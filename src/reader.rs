@@ -94,7 +94,7 @@ pub struct ProgressBody {
     pub percent: Option<f64>,
 }
 
-/// POST /progress/:id — upsert the reading position for the single user.
+/// POST /progress/:id — upsert the reading position for the current user.
 pub async fn save_progress(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
