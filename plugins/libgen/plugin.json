@@ -1,0 +1,10 @@
+{
+  "id": "libgen",
+  "name": "Library Genesis",
+  "version": "1.0.0",
+  "kind": "source",
+  "wasm": "libgen.wasm",
+  "capabilities": ["http", "kv"],
+  "author": "shelfarrs",
+  "description": "Search and download from Library Genesis (mirror rotation via kv)."
+}
