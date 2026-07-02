@@ -1,4 +1,7 @@
 /target
 /data
+/books
+/plugin-src/*/target
+server.log
 *.db
 *.db-*

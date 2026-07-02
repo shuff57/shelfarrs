@@ -4,7 +4,14 @@ version = "0.0.0"
 edition = "2021"
 description = "Self-hosted ebook hub with a sandboxed plugin ecosystem (working name)"
 
+[workspace]
+members = ["crates/sdk"]
+exclude = ["plugin-src"]
+
 [dependencies]
+shelfarr-sdk = { path = "crates/sdk" }
+extism = "1"
+ureq = "2"
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 maud = "0.26"

@@ -1,0 +1,10 @@
+{
+  "id": "reader",
+  "name": "Reader",
+  "version": "1.0.0",
+  "kind": "viewer",
+  "ui": { "js": "ui/reader.js", "css": "ui/reader.css", "formats": ["epub"] },
+  "capabilities": [],
+  "author": "shelfarr",
+  "description": "The flagship epub reader (epub.js). Writes zero backend code."
+}

@@ -182,14 +182,15 @@ pub async fn book_detail(State(state): State<AppState>, Path(id): Path<i64>) -> 
     let Some(b) = book else {
         return (StatusCode::NOT_FOUND, "no such book").into_response();
     };
+    let has_viewer = crate::plugin::viewer_for(&state.plugins_dir, &b.format).is_some();
     let body = html! {
         article .detail {
             h1 { (b.title) }
             @if let Some(a) = &b.author { p .author { (a) } }
             p .meta { (b.format) @if let Some(s) = b.size { " · " (s / 1024) " KB" } }
             p {
+                @if has_viewer { a .btn href={ "/read/" (b.id) } { "Read" } " " }
                 a .btn href={ "/books/" (b.id) "/file" } { "Download " (b.format) }
-                // ponytail: "Read" lands in phase 2 when the viewer plugin exists.
             }
         }
     };

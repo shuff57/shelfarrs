@@ -1,0 +1,29 @@
+/* Reader viewer chrome. The #viewer element is provided by the core /read page. */
+.reader-wrap {
+  position: fixed;
+  inset: 56px 0 0 0; /* below the topbar */
+  display: flex;
+  flex-direction: column;
+  background: #f5f3ee;
+}
+#viewer {
+  flex: 1;
+  min-height: 0;
+}
+.reader-wrap .nav {
+  display: flex;
+  justify-content: space-between;
+  padding: .5rem 1rem;
+  background: #1b1f26;
+}
+.reader-wrap .nav button {
+  font-size: 1.4rem;
+  line-height: 1;
+  padding: .2rem 1.2rem;
+  background: #2a63a8;
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.reader-wrap .nav button:hover { background: #3574c0; }

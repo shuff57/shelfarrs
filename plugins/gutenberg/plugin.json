@@ -1,0 +1,10 @@
+{
+  "id": "gutenberg",
+  "name": "Project Gutenberg",
+  "version": "1.0.0",
+  "kind": "source",
+  "wasm": "gutenberg.wasm",
+  "capabilities": ["http"],
+  "author": "shelfarr",
+  "description": "Free public-domain ebooks from Project Gutenberg (via Gutendex)."
+}

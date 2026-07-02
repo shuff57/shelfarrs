@@ -1,5 +1,7 @@
 mod books;
 mod jobs;
+mod plugin;
+mod reader;
 mod source;
 
 use axum::{
@@ -7,12 +9,12 @@ use axum::{
     Router,
 };
 use maud::{html, Markup, DOCTYPE};
-use source::{Gutenberg, Source};
+use source::Source;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tower_http::services::ServeDir;
 
 #[derive(Clone)]
@@ -20,6 +22,7 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub sources: Arc<HashMap<String, Box<dyn Source>>>,
     pub books_dir: PathBuf,
+    pub plugins_dir: PathBuf,
     pub http: reqwest::Client,
 }
 
@@ -69,13 +72,17 @@ async fn main() -> anyhow::Result<()> {
         .timeout(std::time::Duration::from_secs(300))
         .build()?;
 
-    let mut sources: HashMap<String, Box<dyn Source>> = HashMap::new();
-    sources.insert("gutenberg".into(), Box::new(Gutenberg::new(http.clone())));
+    // Load source plugins (WASM, sandboxed) from the plugins dir.
+    let plugins_dir = PathBuf::from(std::env::var("PLUGINS_DIR").unwrap_or_else(|_| "plugins".into()));
+    std::fs::create_dir_all(&plugins_dir)?;
+    let kv = Arc::new(Mutex::new(HashMap::new()));
+    let sources = plugin::load_sources(&plugins_dir, kv);
 
     let state = AppState {
         pool,
         sources: Arc::new(sources),
         books_dir,
+        plugins_dir,
         http,
     };
 
@@ -89,8 +96,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/add", post(books::add))
         .route("/books/{id}", get(books::book_detail))
         .route("/books/{id}/file", get(books::book_file))
+        .route("/read/{id}", get(reader::read))
+        .route("/progress/{id}", post(reader::save_progress))
         .route("/healthz", get(|| async { "ok" }))
         .nest_service("/assets", ServeDir::new("assets"))
+        .nest_service("/plugins", ServeDir::new(state.plugins_dir.clone()))
         .with_state(state);
 
     let addr = std::env::var("BIND").unwrap_or_else(|_| "0.0.0.0:8080".into());
