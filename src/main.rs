@@ -374,6 +374,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/activity", get(jobs::activity_page))
         .route("/add", post(books::add))
         .route("/books/{id}", get(books::book_detail))
+        .route("/books/{id}/edit", post(books::book_edit))
+        .route("/books/{id}/delete", post(books::book_delete))
         .route("/books/{id}/file", get(books::book_file))
         .route("/books/{id}/cover", get(books::book_cover))
         .route("/read/{id}", get(reader::read))

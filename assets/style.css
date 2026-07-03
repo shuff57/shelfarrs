@@ -304,6 +304,26 @@ code { background: var(--card); padding: .1rem .35rem; border-radius: 4px; font-
 }
 .calitem:hover { background: rgba(33, 150, 243, .3); }
 
+/* edit/delete panels on detail page */
+details.panel { margin-top: 1rem; clear: both; }
+details.panel > summary { display: inline-flex; }
+details.panel .danger-text { color: #fa5252; }
+.editform {
+  display: grid; grid-template-columns: 110px 1fr; gap: .5rem .75rem; align-items: center;
+  max-width: 560px; margin-top: .75rem; padding: 1rem;
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+}
+.editform label { color: var(--muted); font-size: .85rem; }
+.editform label.check { grid-column: 2; color: var(--text-2); }
+.editform input[type=text], .editform input[type=number] {
+  padding: .45rem .6rem; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; color: inherit; font: inherit;
+}
+.editform input:focus { outline: none; border-color: var(--brand); }
+.editform textarea { grid-column: 2; }
+.editform .btn { grid-column: 2; justify-self: start; }
+.editform label:has(+ textarea) { align-self: start; }
+
 .seq-card { position: relative; }
 .seq-card .seq {
   position: absolute; top: 6px; left: 6px; z-index: 2;

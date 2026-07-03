@@ -8,7 +8,7 @@ use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::{Request, StatusCode},
-    response::{Html, IntoResponse, Response},
+    response::{Html, IntoResponse, Redirect, Response},
     Form,
 };
 use maud::html;
@@ -29,9 +29,11 @@ pub struct Book {
     pub cover: Option<String>,
     pub series: Option<String>,
     pub series_index: Option<f64>,
+    pub monitored: i64,
 }
 
-const BOOK_COLS: &str = "id,title,author,format,size,description,cover,series,series_index";
+const BOOK_COLS: &str =
+    "id,title,author,format,size,description,cover,series,series_index,monitored";
 
 const BOOK_EXTS: &[&str] = &["epub", "pdf", "cbz", "cbr", "mobi", "azw3", "txt"];
 
@@ -639,15 +641,128 @@ pub async fn book_detail(State(state): State<AppState>, Path(id): Path<i64>) -> 
                     @if let Some(i) = b.series_index { " #" (fmt_index(i)) }
                 }
             }
-            p .meta { (b.format) @if let Some(s) = b.size { " · " (s / 1024) " KB" } }
+            p .meta {
+                (b.format) @if let Some(s) = b.size { " · " (s / 1024) " KB" }
+                " · " @if b.monitored == 1 { "Monitored" } @else { "Unmonitored" }
+            }
             @if let Some(d) = &b.description { p .desc { (d) } }
             p {
                 @if has_viewer { a .btn href={ "/read/" (b.id) } { "Read" } " " }
                 a .btn href={ "/books/" (b.id) "/file" } { "Download " (b.format) }
             }
+
+            details .panel {
+                summary .toolbar-btn { "Edit" }
+                form .editform action={ "/books/" (b.id) "/edit" } method="post" {
+                    label { "Title" } input type="text" name="title" value=(b.title);
+                    label { "Author" } input type="text" name="author" value=[b.author.as_deref()];
+                    label { "Series" } input type="text" name="series" value=[b.series.as_deref()];
+                    label { "Series #" } input type="number" step="0.1" name="series_index"
+                        value=[b.series_index.map(fmt_index)];
+                    label { "Description" } textarea .ta name="description" rows="4" {
+                        (b.description.clone().unwrap_or_default())
+                    }
+                    label .check {
+                        input type="checkbox" name="monitored" value="1" checked[b.monitored == 1];
+                        " Monitored"
+                    }
+                    button .btn type="submit" { "Save" }
+                }
+            }
+            details .panel {
+                summary .toolbar-btn .danger-text { "Delete" }
+                form .editform action={ "/books/" (b.id) "/delete" } method="post" {
+                    label .check {
+                        input type="checkbox" name="delete_file" value="1";
+                        " Also delete the file from disk"
+                    }
+                    button .btn .danger type="submit" { "Delete book" }
+                }
+            }
         }
     };
     Html(page(&b.title, body).into_string()).into_response()
+}
+
+// ---- B1: edit / delete ----
+
+#[derive(Deserialize)]
+pub struct EditForm {
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub series: Option<String>,
+    pub series_index: Option<String>,
+    pub description: Option<String>,
+    pub monitored: Option<String>, // checkbox: present = on
+}
+
+/// Patch-style edit: blank fields clear optionals, blank title keeps the old one.
+pub async fn book_edit(
+    State(state): State<AppState>,
+    axum::Extension(me): axum::Extension<crate::auth::CurrentUser>,
+    Path(id): Path<i64>,
+    Form(f): Form<EditForm>,
+) -> Response {
+    if let Some(r) = crate::auth::deny_non_admin(&me) {
+        return r;
+    }
+    let none_if_blank = |s: Option<String>| s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let idx: Option<f64> = none_if_blank(f.series_index).and_then(|s| s.parse().ok());
+    let _ = sqlx::query(
+        "UPDATE books SET title=COALESCE(?,title), author=?, series=?, series_index=?,
+         description=?, monitored=? WHERE id=?",
+    )
+    .bind(none_if_blank(f.title))
+    .bind(none_if_blank(f.author))
+    .bind(none_if_blank(f.series))
+    .bind(idx)
+    .bind(none_if_blank(f.description))
+    .bind(if f.monitored.is_some() { 1i64 } else { 0 })
+    .bind(id)
+    .execute(&state.pool)
+    .await;
+    Redirect::to(&format!("/books/{id}")).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct DeleteForm {
+    pub delete_file: Option<String>,
+}
+
+pub async fn book_delete(
+    State(state): State<AppState>,
+    axum::Extension(me): axum::Extension<crate::auth::CurrentUser>,
+    Path(id): Path<i64>,
+    Form(f): Form<DeleteForm>,
+) -> Response {
+    if let Some(r) = crate::auth::deny_non_admin(&me) {
+        return r;
+    }
+    let row = sqlx::query("SELECT path, cover FROM books WHERE id=?")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten();
+    if let Some(r) = row {
+        if f.delete_file.is_some() {
+            let path: String = r.get("path");
+            // Only ever delete inside the books dir (defence-in-depth).
+            let p = std::path::Path::new(&path);
+            if p.starts_with(&state.books_dir) {
+                let _ = std::fs::remove_file(p);
+            } else {
+                tracing::warn!("refusing to delete outside books dir: {path}");
+            }
+        }
+        if let Some(cover) = r.get::<Option<String>, _>("cover") {
+            let _ = std::fs::remove_file(state.covers_dir.join(cover));
+        }
+        let _ = sqlx::query("DELETE FROM progress WHERE book=?").bind(id).execute(&state.pool).await;
+        let _ = sqlx::query("DELETE FROM books WHERE id=?").bind(id).execute(&state.pool).await;
+        tracing::info!("deleted book {id} (file: {})", f.delete_file.is_some());
+    }
+    Redirect::to("/").into_response()
 }
 
 /// Range-capable byte serving — the one seam every viewer needs. ServeFile gives
