@@ -377,19 +377,28 @@ pub async fn library(State(state): State<AppState>, Query(q): Query<LibQ>) -> Ht
                 }
             }
             _ if view == "list" => html! {
-                table .arr-table {
-                    thead { tr { th {} th { "Title" } th { "Author" } th { "Format" } th { "Size" } th {} } }
-                    tbody {
-                        @for b in &books {
-                            tr {
-                                td .t-thumb {
-                                    @if b.cover.is_some() { img src={ "/books/" (b.id) "/cover" } alt=""; }
+                form method="post" action="/books/bulk" {
+                    div .bulkbar {
+                        button .toolbar-btn type="submit" name="action" value="monitor" { "Monitor" }
+                        button .toolbar-btn type="submit" name="action" value="unmonitor" { "Unmonitor" }
+                        button .toolbar-btn .danger-text type="submit" name="action" value="delete" { "Delete" }
+                        label .check { input type="checkbox" name="delete_files" value="1"; " also delete files" }
+                    }
+                    table .arr-table {
+                        thead { tr { th {} th {} th { "Title" } th { "Author" } th { "Format" } th { "Size" } th {} } }
+                        tbody {
+                            @for b in &books {
+                                tr {
+                                    td { input type="checkbox" name="ids" value=(b.id); }
+                                    td .t-thumb {
+                                        @if b.cover.is_some() { img src={ "/books/" (b.id) "/cover" } alt=""; }
+                                    }
+                                    td .t-title { a href={ "/books/" (b.id) } { (b.title) } }
+                                    td .t-muted { (b.author.clone().unwrap_or_default()) }
+                                    td .t-muted { (b.format) }
+                                    td .t-muted { @if let Some(s) = b.size { (s / 1024) " KB" } }
+                                    td { a .btn .btn-sm href={ "/read/" (b.id) } { "Read" } }
                                 }
-                                td .t-title { a href={ "/books/" (b.id) } { (b.title) } }
-                                td .t-muted { (b.author.clone().unwrap_or_default()) }
-                                td .t-muted { (b.format) }
-                                td .t-muted { @if let Some(s) = b.size { (s / 1024) " KB" } }
-                                td { a .btn .btn-sm href={ "/read/" (b.id) } { "Read" } }
                             }
                         }
                     }
@@ -556,6 +565,32 @@ pub async fn library_import(State(state): State<AppState>) -> Html<String> {
         form action="/library-import/scan" method="post" style="margin-top:1rem" {
             button .btn type="submit" { "Scan Now" }
         }
+        @let pattern = naming_pattern(&state).await;
+        @let plan = organize_plan(&state).await;
+        h2 { "Naming & organize" }
+        form .search action="/library-import/naming" method="post" {
+            input type="text" name="pattern" value=(pattern);
+            button .btn type="submit" { "Save pattern" }
+        }
+        p .muted { "Tokens: " code { "{Author} {Series} {SeriesNumber} {Title}" } " — '/' makes folders. Segments whose tokens are all empty are dropped." }
+        @if plan.is_empty() {
+            p .muted { "Everything already matches the pattern." }
+        } @else {
+            table .arr-table {
+                thead { tr { th { "Current" } th { "Target" } } }
+                tbody {
+                    @for (_, cur, tgt) in plan.iter().take(20) {
+                        tr {
+                            td .t-muted { (cur) }
+                            td .t-title { (tgt.display()) }
+                        }
+                    }
+                }
+            }
+            form .inline hx-post="/library-import/organize" hx-target="this" hx-swap="outerHTML" style="margin-top:.75rem;display:block" {
+                button .btn type="submit" { "Organize " (plan.len()) " file(s)" }
+            }
+        }
         h2 { "Recent scans" }
         @if scans.is_empty() { p .muted { "No scans yet." } }
         div .results {
@@ -609,6 +644,192 @@ pub async fn search_suggest(State(state): State<AppState>, Query(sq): Query<Sugg
         @if rows.is_empty() { p .muted style="padding:.5rem .8rem" { "No matches" } }
     };
     Html(m.into_string())
+}
+
+// ---- B6: naming pattern + organize ----
+
+pub const DEFAULT_PATTERN: &str = "{Author}/{Title}";
+
+/// Render a naming pattern into a relative path. Tokens: {Author} {Series}
+/// {SeriesNumber} {Title}. A path segment whose tokens all came up empty is
+/// dropped (no stray folders for books without a series).
+pub fn render_pattern(pattern: &str, b: &Book) -> PathBuf {
+    let seriesnum = b.series_index.map(fmt_index).unwrap_or_default();
+    let mut out = PathBuf::new();
+    for seg in pattern.split('/') {
+        let had_token = seg.contains('{');
+        let rendered = seg
+            .replace("{Author}", b.author.as_deref().unwrap_or(""))
+            .replace("{Series}", b.series.as_deref().unwrap_or(""))
+            .replace("{SeriesNumber}", &seriesnum)
+            .replace("{Title}", &b.title);
+        let clean = sanitize(rendered.trim());
+        if had_token && (clean.is_empty() || clean == "book") && rendered.trim().is_empty() {
+            continue; // all tokens empty -> drop segment
+        }
+        if !rendered.trim().is_empty() {
+            out.push(clean);
+        }
+    }
+    if out.as_os_str().is_empty() {
+        out.push(sanitize(&b.title));
+    }
+    out
+}
+
+pub async fn naming_pattern(state: &AppState) -> String {
+    sqlx::query("SELECT value FROM settings WHERE key='naming_pattern'")
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten()
+        .map(|r| r.get::<String, _>("value"))
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_PATTERN.into())
+}
+
+/// (book, current path, target path) for every book not already organized.
+pub async fn organize_plan(state: &AppState) -> Vec<(i64, String, PathBuf)> {
+    let pattern = naming_pattern(state).await;
+    let books = all_books(state).await.unwrap_or_default();
+    let mut out = vec![];
+    for b in &books {
+        let path: Option<String> = sqlx::query("SELECT path FROM books WHERE id=?")
+            .bind(b.id)
+            .fetch_optional(&state.pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| r.get("path"));
+        let Some(current) = path else { continue };
+        let target = state
+            .books_dir
+            .join(render_pattern(&pattern, b))
+            .with_extension(&b.format);
+        if std::path::Path::new(&current) != target.as_path() {
+            out.push((b.id, current, target));
+        }
+    }
+    out
+}
+
+#[derive(Deserialize)]
+pub struct PatternForm {
+    pub pattern: String,
+}
+
+pub async fn naming_save(
+    State(state): State<AppState>,
+    axum::Extension(me): axum::Extension<crate::auth::CurrentUser>,
+    Form(f): Form<PatternForm>,
+) -> Response {
+    if let Some(r) = crate::auth::deny_non_admin(&me) {
+        return r;
+    }
+    let _ = sqlx::query(
+        "INSERT INTO settings (key,value) VALUES ('naming_pattern',?)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    )
+    .bind(f.pattern.trim())
+    .execute(&state.pool)
+    .await;
+    Redirect::to("/library-import").into_response()
+}
+
+/// Execute the organize plan: move files into the pattern layout.
+pub async fn organize_apply(
+    State(state): State<AppState>,
+    axum::Extension(me): axum::Extension<crate::auth::CurrentUser>,
+) -> Response {
+    if let Some(r) = crate::auth::deny_non_admin(&me) {
+        return r;
+    }
+    let plan = organize_plan(&state).await;
+    let mut moved = 0;
+    for (id, current, target) in plan {
+        if let Some(parent) = target.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match std::fs::rename(&current, &target) {
+            Ok(_) => {
+                let _ = sqlx::query("UPDATE books SET path=? WHERE id=?")
+                    .bind(target.to_string_lossy().as_ref())
+                    .bind(id)
+                    .execute(&state.pool)
+                    .await;
+                moved += 1;
+            }
+            Err(e) => tracing::warn!("organize: could not move {current}: {e}"),
+        }
+    }
+    Html(format!("<span class=\"queued\">Moved {moved} file(s) ✓</span>")).into_response()
+}
+
+// ---- B6: bulk edit (list view) ----
+
+/// Bulk actions from the list view. Parsed by hand — repeated `ids=` keys
+/// aren't supported by serde_urlencoded and don't justify a dependency.
+pub async fn bulk(
+    State(state): State<AppState>,
+    axum::Extension(me): axum::Extension<crate::auth::CurrentUser>,
+    body: String,
+) -> Response {
+    if let Some(r) = crate::auth::deny_non_admin(&me) {
+        return r;
+    }
+    let mut ids: Vec<i64> = vec![];
+    let mut action = String::new();
+    let mut delete_files = false;
+    for pair in body.split('&') {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        match k {
+            "ids" => {
+                if let Ok(id) = v.parse() {
+                    ids.push(id);
+                }
+            }
+            "action" => action = v.to_string(),
+            "delete_files" => delete_files = true,
+            _ => {}
+        }
+    }
+    for id in &ids {
+        match action.as_str() {
+            "monitor" => {
+                let _ = sqlx::query("UPDATE books SET monitored=1 WHERE id=?").bind(id).execute(&state.pool).await;
+            }
+            "unmonitor" => {
+                let _ = sqlx::query("UPDATE books SET monitored=0 WHERE id=?").bind(id).execute(&state.pool).await;
+            }
+            "delete" => {
+                // reuse the single-book path (cover/progress cleanup + confinement)
+                let _ = delete_one(&state, *id, delete_files).await;
+            }
+            _ => {}
+        }
+    }
+    Redirect::to("/?view=list").into_response()
+}
+
+async fn delete_one(state: &AppState, id: i64, delete_file: bool) -> anyhow::Result<()> {
+    let row = sqlx::query("SELECT path, cover FROM books WHERE id=?")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await?
+        .context("no such book")?;
+    if delete_file {
+        let path: String = row.get("path");
+        let p = std::path::Path::new(&path);
+        if p.starts_with(&state.books_dir) {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+    if let Some(cover) = row.get::<Option<String>, _>("cover") {
+        let _ = std::fs::remove_file(state.covers_dir.join(cover));
+    }
+    sqlx::query("DELETE FROM progress WHERE book=?").bind(id).execute(&state.pool).await?;
+    sqlx::query("DELETE FROM books WHERE id=?").bind(id).execute(&state.pool).await?;
+    Ok(())
 }
 
 pub(crate) fn urlenc(s: &str) -> String {
@@ -970,6 +1191,34 @@ mod tests {
             assert_ne!(s, "..");
         }
         assert_eq!(sanitize("Pride and Prejudice"), "Pride and Prejudice");
+    }
+
+    #[test]
+    fn pattern_rendering() {
+        let b = |author: Option<&str>, series: Option<&str>, idx: Option<f64>| Book {
+            id: 1,
+            title: "The Title".into(),
+            author: author.map(String::from),
+            format: "epub".into(),
+            size: None,
+            description: None,
+            cover: None,
+            series: series.map(String::from),
+            series_index: idx,
+            monitored: 1,
+            isbn: None,
+        };
+        let p = "{Author}/{Series}/{SeriesNumber} - {Title}";
+        assert_eq!(
+            render_pattern(p, &b(Some("A. Writer"), Some("Saga"), Some(2.0))),
+            std::path::Path::new("A. Writer").join("Saga").join("2 - The Title")
+        );
+        // no series -> series segment dropped, no stray "-" folder
+        let r = render_pattern("{Author}/{Series}/{Title}", &b(Some("A. Writer"), None, None));
+        assert_eq!(r, std::path::Path::new("A. Writer").join("The Title"));
+        // path-hostile characters sanitized
+        let evil = render_pattern("{Title}", &b(None, None, None));
+        assert!(!evil.to_string_lossy().contains(".."));
     }
 
     #[test]

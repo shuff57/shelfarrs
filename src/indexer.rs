@@ -190,6 +190,80 @@ pub async fn test_indexer(state: &AppState, ix: &Indexer) -> Result<()> {
     }
 }
 
+// ---- Prowlarr import ----
+
+#[derive(Deserialize)]
+pub struct ProwlarrForm {
+    pub url: String,
+    pub api_key: String,
+}
+
+/// Import every indexer from a Prowlarr instance as a torznab/newznab entry
+/// pointing at Prowlarr's per-indexer proxy ({url}/{id}/api) — Prowlarr keeps
+/// owning the tracker credentials.
+pub async fn prowlarr_import(
+    State(state): State<AppState>,
+    Extension(me): Extension<CurrentUser>,
+    Form(f): Form<ProwlarrForm>,
+) -> Response {
+    if let Some(r) = deny_non_admin(&me) {
+        return r;
+    }
+    let base = f.url.trim().trim_end_matches('/').to_string();
+    let list: Vec<serde_json::Value> = match state
+        .http
+        .get(format!("{base}/api/v1/indexer"))
+        .header("X-Api-Key", f.api_key.trim())
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+    {
+        Ok(resp) => resp.json().await.unwrap_or_default(),
+        Err(e) => {
+            return Html(format!("<span class=\"err\">Prowlarr unreachable: {e}</span>")).into_response()
+        }
+    };
+    let mut added = 0;
+    for ix in &list {
+        let (Some(id), Some(name)) = (
+            ix.get("id").and_then(|i| i.as_i64()),
+            ix.get("name").and_then(|n| n.as_str()),
+        ) else {
+            continue;
+        };
+        let proto = if ix.get("protocol").and_then(|p| p.as_str()) == Some("usenet") {
+            "usenet"
+        } else {
+            "torrent"
+        };
+        // skip ones already imported (same proxy URL)
+        let url = format!("{base}/{id}");
+        let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM indexers WHERE url=?")
+            .bind(&url)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+        if exists > 0 {
+            continue;
+        }
+        let _ = sqlx::query(
+            "INSERT INTO indexers (name, protocol, url, api_key, categories) VALUES (?,?,?,?,?)",
+        )
+        .bind(format!("{name} (Prowlarr)"))
+        .bind(proto)
+        .bind(&url)
+        .bind(f.api_key.trim())
+        .bind("7000,7020")
+        .execute(&state.pool)
+        .await;
+        added += 1;
+    }
+    Html(format!(
+        "<span class=\"queued\">Imported {added} indexer(s) — reload to see them</span>"
+    ))
+    .into_response()
+}
+
 // ---- Settings → Indexers tab ----
 
 pub async fn indexers_body(state: &AppState, preset: Option<&str>) -> Markup {
@@ -245,6 +319,13 @@ pub async fn indexers_body(state: &AppState, preset: Option<&str>) -> Markup {
             label { "Categories" } input type="text" name="categories" value="7000,7020";
             label { "Priority" } input type="number" name="priority" value="25";
             button .btn type="submit" { "Add indexer" }
+        }
+        h2 { "Import from Prowlarr" }
+        p .muted { "Pulls every Prowlarr indexer in via its per-indexer proxy — Prowlarr keeps owning tracker credentials and FlareSolverr." }
+        form .editform hx-post="/settings/indexers/prowlarr-import" hx-target="this" hx-swap="beforeend" {
+            label { "Prowlarr URL" } input type="text" name="url" placeholder="http://192.168.68.246:9696" required;
+            label { "API key" } input type="text" name="api_key" required;
+            button .btn type="submit" { "Import" }
         }
     }
 }

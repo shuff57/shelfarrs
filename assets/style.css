@@ -304,6 +304,9 @@ code { background: var(--card); padding: .1rem .35rem; border-radius: 4px; font-
 }
 .calitem:hover { background: rgba(33, 150, 243, .3); }
 
+.bulkbar { display: flex; align-items: center; gap: .25rem; margin-bottom: .5rem; }
+.bulkbar .check { color: var(--muted); font-size: .85rem; margin-left: .5rem; }
+
 /* edit/delete panels on detail page */
 details.panel { margin-top: 1rem; clear: both; }
 details.panel > summary { display: inline-flex; }
