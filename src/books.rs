@@ -25,6 +25,8 @@ pub struct Book {
     pub author: Option<String>,
     pub format: String,
     pub size: Option<i64>,
+    pub description: Option<String>,
+    pub cover: Option<String>,
 }
 
 const BOOK_EXTS: &[&str] = &["epub", "pdf", "cbz", "cbr", "mobi", "azw3", "txt"];
@@ -138,7 +140,9 @@ pub async fn download_and_import(state: &AppState, cand: &Candidate) -> Result<(
 
 async fn all_books(state: &AppState) -> Result<Vec<Book>> {
     Ok(
-        sqlx::query_as::<_, Book>("SELECT id,title,author,format,size FROM books ORDER BY title")
+        sqlx::query_as::<_, Book>(
+            "SELECT id,title,author,format,size,description,cover FROM books ORDER BY title",
+        )
             .fetch_all(&state.pool)
             .await?,
     )
@@ -160,6 +164,9 @@ pub async fn library(State(state): State<AppState>) -> Html<String> {
             section .grid {
                 @for b in &books {
                     a .card href={ "/books/" (b.id) } {
+                        @if b.cover.is_some() {
+                            img .cover src={ "/books/" (b.id) "/cover" } alt="" loading="lazy";
+                        }
                         span .fmt { (b.format) }
                         span .title { (b.title) }
                         @if let Some(a) = &b.author { span .author { (a) } }
@@ -173,7 +180,7 @@ pub async fn library(State(state): State<AppState>) -> Html<String> {
 
 pub async fn book_detail(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
     let book = sqlx::query_as::<_, Book>(
-        "SELECT id,title,author,format,size FROM books WHERE id=?",
+        "SELECT id,title,author,format,size,description,cover FROM books WHERE id=?",
     )
     .bind(id)
     .fetch_optional(&state.pool)
@@ -186,9 +193,11 @@ pub async fn book_detail(State(state): State<AppState>, Path(id): Path<i64>) -> 
     let has_viewer = crate::plugin::viewer_for(&state.plugins_dir, &b.format).is_some();
     let body = html! {
         article .detail {
+            @if b.cover.is_some() { img .cover src={ "/books/" (b.id) "/cover" } alt=""; }
             h1 { (b.title) }
             @if let Some(a) = &b.author { p .author { (a) } }
             p .meta { (b.format) @if let Some(s) = b.size { " · " (s / 1024) " KB" } }
+            @if let Some(d) = &b.description { p .desc { (d) } }
             p {
                 @if has_viewer { a .btn href={ "/read/" (b.id) } { "Read" } " " }
                 a .btn href={ "/books/" (b.id) "/file" } { "Download " (b.format) }
@@ -216,6 +225,28 @@ pub async fn book_file(
         return (StatusCode::NOT_FOUND, "no such book").into_response();
     };
     match ServeFile::new(path).oneshot(req).await {
+        Ok(res) => res.into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Serve a book's extracted cover image from DATA_DIR/covers.
+pub async fn book_cover(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    req: Request<Body>,
+) -> Response {
+    let cover: Option<String> = sqlx::query("SELECT cover FROM books WHERE id=?")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| r.get::<Option<String>, _>("cover"));
+    let Some(name) = cover else {
+        return (StatusCode::NOT_FOUND, "no cover").into_response();
+    };
+    match ServeFile::new(state.covers_dir.join(name)).oneshot(req).await {
         Ok(res) => res.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }

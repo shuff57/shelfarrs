@@ -36,6 +36,9 @@ a { color: #6db3f2; }
   text-decoration: none; color: inherit; min-height: 120px;
 }
 .card:hover { border-color: #3d4756; }
+.card img.cover { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 4px; }
+.detail img.cover { float: left; width: 180px; margin: 0 1.25rem 1rem 0; border-radius: 6px; }
+.detail .desc { color: #c6ccd4; max-width: 65ch; }
 .card .fmt { font-size: .7rem; text-transform: uppercase; color: #e8b64c; letter-spacing: .5px; }
 .card .title { font-weight: 600; }
 .card .author, .result .author, .detail .author { color: #8a93a0; font-size: .9rem; }

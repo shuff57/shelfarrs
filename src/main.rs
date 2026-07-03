@@ -3,6 +3,7 @@ mod books;
 mod discovery;
 mod install;
 mod jobs;
+mod meta;
 mod opds;
 mod plugin;
 mod reader;
@@ -29,6 +30,7 @@ pub struct AppState {
     pub sources: Arc<RwLock<Arc<SourceMap>>>,
     pub kv: KvStore,
     pub books_dir: PathBuf,
+    pub covers_dir: PathBuf,
     pub plugins_dir: PathBuf,
     pub http: reqwest::Client,
 }
@@ -126,6 +128,8 @@ async fn main() -> anyhow::Result<()> {
     let books_dir =
         PathBuf::from(std::env::var("BOOKS_DIR").unwrap_or_else(|_| format!("{data_dir}/books")));
     std::fs::create_dir_all(&books_dir)?;
+    let covers_dir = PathBuf::from(format!("{data_dir}/covers"));
+    std::fs::create_dir_all(&covers_dir)?;
 
     let http = reqwest::Client::builder()
         .user_agent("shelfarrs/0.0")
@@ -151,6 +155,7 @@ async fn main() -> anyhow::Result<()> {
         sources: Arc::new(RwLock::new(Arc::new(sources))),
         kv,
         books_dir,
+        covers_dir,
         plugins_dir,
         http,
     };
@@ -165,6 +170,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/add", post(books::add))
         .route("/books/{id}", get(books::book_detail))
         .route("/books/{id}/file", get(books::book_file))
+        .route("/books/{id}/cover", get(books::book_cover))
         .route("/read/{id}", get(reader::read))
         .route("/progress/{id}", post(reader::save_progress))
         .route("/opds", get(opds::feed))

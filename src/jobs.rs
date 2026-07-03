@@ -79,12 +79,15 @@ async fn run(state: &AppState, job: &Job) -> Result<()> {
     match job.kind.as_str() {
         "scan" => {
             let n = crate::books::scan_dir(state).await?;
-            tracing::info!("scan imported {n} new books");
+            let e = crate::meta::enrich_pending(state).await;
+            tracing::info!("scan imported {n} new books, enriched {e}");
             Ok(())
         }
         "download" => {
             let cand: crate::source::Candidate = serde_json::from_str(&job.payload)?;
-            crate::books::download_and_import(state, &cand).await
+            crate::books::download_and_import(state, &cand).await?;
+            crate::meta::enrich_pending(state).await;
+            Ok(())
         }
         "acquire" => {
             let v: serde_json::Value = serde_json::from_str(&job.payload)?;
