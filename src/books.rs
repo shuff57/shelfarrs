@@ -161,13 +161,21 @@ pub async fn library(State(state): State<AppState>) -> Html<String> {
         }
     } else {
         html! {
+            header .pagehead {
+                h1 { "Library" }
+                span .chip .primary { (books.len()) @if books.len() == 1 { " Book" } @else { " Books" } }
+            }
             section .grid {
                 @for b in &books {
                     a .card href={ "/books/" (b.id) } {
-                        @if b.cover.is_some() {
-                            img .cover src={ "/books/" (b.id) "/cover" } alt="" loading="lazy";
+                        div .poster {
+                            @if b.cover.is_some() {
+                                img .cover src={ "/books/" (b.id) "/cover" } alt="" loading="lazy";
+                            } @else {
+                                div .cover-ph { span { (b.format) } }
+                            }
+                            div .status-bar {}
                         }
-                        span .fmt { (b.format) }
                         span .title { (b.title) }
                         @if let Some(a) = &b.author { span .author { (a) } }
                     }

@@ -47,8 +47,57 @@ impl AppState {
     }
 }
 
-/// Wrap page chrome (nav + htmx) around body content.
+// Inline line-icons (stroke = currentColor), Listenarr-style sidebar glyphs.
+const ICON_LIBRARY: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>"#;
+const ICON_DISCOVER: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></svg>"#;
+const ICON_FOLLOWING: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21.2l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>"#;
+const ICON_PLUGINS: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2v6M15 2v6M5 8h14v4a7 7 0 0 1-7 7 7 7 0 0 1-7-7V8z"/><path d="M12 19v3"/></svg>"#;
+const ICON_ACCOUNT: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>"#;
+pub const LOGO: &str = r##"<svg viewBox="0 0 24 24" fill="none" stroke="#2596f3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z"/></svg>"##;
+
+fn nav_item(href: &str, label: &str, icon: &str, active: bool) -> Markup {
+    html! {
+        a .item .active[active] href=(href) {
+            span .icon { (maud::PreEscaped(icon)) }
+            span { (label) }
+        }
+    }
+}
+
+/// Wrap page chrome (topbar + sidebar + htmx) around body content. The active
+/// nav item is inferred from the page title; detail pages highlight nothing.
 pub fn page(title: &str, body: Markup) -> Markup {
+    let nav = html! {
+        (nav_item("/", "Library", ICON_LIBRARY, title == "Library"))
+        (nav_item("/discover", "Discover", ICON_DISCOVER, title == "Discover"))
+        (nav_item("/following", "Following", ICON_FOLLOWING, title == "Following"))
+        (nav_item("/settings/plugins", "Plugins", ICON_PLUGINS, title == "Plugins"))
+        (nav_item("/settings/users", "Account", ICON_ACCOUNT, title == "Account" || title == "Users"))
+    };
+    shell(
+        title,
+        html! {
+            header .topbar {
+                a href="/" .brand {
+                    span .logo { (maud::PreEscaped(LOGO)) }
+                    span { "Shelfarrs" }
+                }
+            }
+            aside .sidebar {
+                nav { (nav) }
+                div .version { "v" (env!("CARGO_PKG_VERSION")) }
+            }
+            main { (body) }
+        },
+    )
+}
+
+/// Bare chrome (no sidebar/topbar) — the login screen.
+pub fn page_bare(title: &str, body: Markup) -> Markup {
+    shell(title, html! { main .bare { (body) } })
+}
+
+fn shell(title: &str, content: Markup) -> Markup {
     html! {
         (DOCTYPE)
         html lang="en" {
@@ -59,19 +108,7 @@ pub fn page(title: &str, body: Markup) -> Markup {
                 link rel="stylesheet" href="/assets/style.css";
                 script src="/assets/htmx.min.js" {}
             }
-            body {
-                header .topbar {
-                    a href="/" .brand { "Shelfarrs" }
-                    nav {
-                    a href="/" { "Library" }
-                    a href="/discover" { "Discover" }
-                    a href="/following" { "Following" }
-                    a href="/settings/plugins" { "Plugins" }
-                    a href="/settings/users" { "Account" }
-                }
-                }
-                main { (body) }
-            }
+            body { (content) }
         }
     }
 }

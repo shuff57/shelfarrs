@@ -161,17 +161,26 @@ pub async fn gate(state: AppState, mut req: Request, next: Next) -> Response {
 // ---- handlers ----
 
 pub async fn login_page() -> Html<String> {
-    let body = html! {
-        section .login {
-            h1 { "Sign in" }
-            form action="/login" method="post" .search style="flex-direction:column;align-items:stretch;max-width:320px" {
-                input type="text" name="username" placeholder="Username" autofocus required;
-                input type="password" name="password" placeholder="Password" required style="margin-top:.5rem";
-                button .btn type="submit" style="margin-top:.75rem" { "Sign in" }
+    Html(crate::page_bare("Sign in", login_card(None)).into_string())
+}
+
+fn login_card(error: Option<&str>) -> maud::Markup {
+    html! {
+        section .login-card {
+            div .login-brand {
+                span .logo { (maud::PreEscaped(crate::LOGO)) }
+                span .word { "Shelfarrs" }
+            }
+            @if let Some(e) = error { p .err { (e) } }
+            form action="/login" method="post" {
+                label { "Username" }
+                input type="text" name="username" autofocus required;
+                label { "Password" }
+                input type="password" name="password" required;
+                button .btn type="submit" { "Sign in" }
             }
         }
-    };
-    Html(page("Sign in", body).into_string())
+    }
 }
 
 #[derive(Deserialize)]
@@ -189,8 +198,9 @@ pub async fn login(State(state): State<AppState>, Form(f): Form<LoginForm>) -> R
         .flatten()
         .map(|r| r.get("password_hash"));
     if !hash.map(|h| verify_password(&f.password, &h)).unwrap_or(false) {
-        let body = html! { section .empty { h1 { "Wrong username or password" } p { a href="/login" { "Try again" } } } };
-        return (StatusCode::UNAUTHORIZED, Html(page("Sign in", body).into_string())).into_response();
+        let body = login_card(Some("Wrong username or password"));
+        return (StatusCode::UNAUTHORIZED, Html(crate::page_bare("Sign in", body).into_string()))
+            .into_response();
     }
     let token = new_token();
     let _ = sqlx::query("INSERT INTO sessions (token, username) VALUES (?, ?)")
