@@ -164,11 +164,12 @@ pub struct LibQ {
     pub dir: Option<String>,
 }
 
-/// One poster card (grid mode) — cover, status underline, hover overlay.
+/// One poster card (grid mode) — cover link, status underline, hover overlay
+/// (title/author/monitored) and hover action buttons (read/edit/delete).
 fn poster_card(b: &Book, info: bool) -> maud::Markup {
     html! {
-        a .card href={ "/books/" (b.id) } {
-            div .poster {
+        div .card {
+            a .poster href={ "/books/" (b.id) } {
                 @if b.cover.is_some() {
                     img .cover src={ "/books/" (b.id) "/cover" } alt="" loading="lazy";
                 } @else {
@@ -177,8 +178,19 @@ fn poster_card(b: &Book, info: bool) -> maud::Markup {
                 div .overlay {
                     span .o-title { (b.title) }
                     @if let Some(a) = &b.author { span .o-author { (a) } }
+                    span .monitored-badge {
+                        span .icon { (maud::PreEscaped(crate::icons::EYE)) }
+                        @if b.monitored == 1 { "Monitored" } @else { "Unmonitored" }
+                    }
                 }
-                div .status-bar {}
+            }
+            div .card-actions {
+                a .action-btn .play href={ "/read/" (b.id) } title="Read" { (maud::PreEscaped(crate::icons::BOOK_OPEN)) }
+                a .action-btn href={ "/books/" (b.id) } title="Edit" { (maud::PreEscaped(crate::icons::PENCIL)) }
+                form method="post" action={ "/books/" (b.id) "/delete" }
+                    onsubmit={ "return confirm('Delete " (b.title.replace('\'', "\\'")) "?')" } .inline {
+                    button .action-btn .del type="submit" title="Delete" { (maud::PreEscaped(crate::icons::TRASH)) }
+                }
             }
             // captions only with the info toggle — bare posters by default, like the arr grid
             @if info {
@@ -839,7 +851,16 @@ pub(crate) fn urlenc(s: &str) -> String {
         .collect()
 }
 
-pub async fn book_detail(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+#[derive(Deserialize)]
+pub struct DetailQ {
+    pub tab: Option<String>,
+}
+
+pub async fn book_detail(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(dq): Query<DetailQ>,
+) -> Response {
     let book = sqlx::query_as::<_, Book>(&format!("SELECT {BOOK_COLS} FROM books WHERE id=?"))
     .bind(id)
     .fetch_optional(&state.pool)
@@ -850,26 +871,139 @@ pub async fn book_detail(State(state): State<AppState>, Path(id): Path<i64>) -> 
         return (StatusCode::NOT_FOUND, "no such book").into_response();
     };
     let has_viewer = crate::plugin::viewer_for(&state.plugins_dir, &b.format).is_some();
+    let tab = dq.tab.as_deref().unwrap_or("details");
+    let file_row = sqlx::query("SELECT path, added_at FROM books WHERE id=?")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten();
+    let (path, added): (String, String) = file_row
+        .map(|r| (r.get("path"), r.get("added_at")))
+        .unwrap_or_default();
+    let history = sqlx::query(
+        "SELECT title, state, updated_at FROM downloads WHERE title LIKE '%'||?||'%' ORDER BY id DESC LIMIT 20",
+    )
+    .bind(&b.title)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    let cover_url = format!("/books/{}/cover", b.id);
+
     let body = html! {
-        article .detail {
-            @if b.cover.is_some() { img .cover src={ "/books/" (b.id) "/cover" } alt=""; }
-            h1 { (b.title) }
-            @if let Some(a) = &b.author { p .author { (a) } }
-            @if let Some(s) = &b.series {
-                p .meta {
-                    "Series: " a href={ "/collection/series/" (urlenc(s)) } { (s) }
-                    @if let Some(i) = b.series_index { " #" (fmt_index(i)) }
+        div .detail-nav {
+            a .toolbar-btn href="/" { span .icon { (maud::PreEscaped(crate::icons::ARROW_LEFT)) } "Back" }
+            div .detail-actions {
+                @if has_viewer { a .action-btn .play .lg href={ "/read/" (b.id) } title="Read" { (maud::PreEscaped(crate::icons::BOOK_OPEN)) } }
+                a .action-btn .lg href={ "/books/" (b.id) "/file" } title="Download" { (maud::PreEscaped(crate::icons::DOWNLOAD)) }
+                form .inline hx-post={ "/books/" (b.id) "/rescan" } hx-swap="none" {
+                    button .action-btn .lg type="submit" title="Rescan metadata" { (maud::PreEscaped(crate::icons::REFRESH)) }
+                }
+                form .inline hx-post={ "/books/" (b.id) "/auto-search" } hx-swap="none" {
+                    button .action-btn .lg type="submit" title="Search for upgrade" { (maud::PreEscaped(crate::icons::ROBOT)) }
+                }
+                form method="post" action={ "/books/" (b.id) "/delete" }
+                    onsubmit="return confirm('Delete this book?')" .inline {
+                    button .action-btn .del .lg type="submit" title="Delete" { (maud::PreEscaped(crate::icons::TRASH)) }
                 }
             }
-            p .meta {
-                (b.format) @if let Some(s) = b.size { " · " (s / 1024) " KB" }
-                " · " @if b.monitored == 1 { "Monitored" } @else { "Unmonitored" }
+        }
+        section .hero-detail {
+            @if b.cover.is_some() {
+                div .hero-bg style={ "background-image:url('" (cover_url) "')" } {}
             }
-            @if let Some(d) = &b.description { p .desc { (d) } }
-            p {
-                @if has_viewer { a .btn href={ "/read/" (b.id) } { "Read" } " " }
-                a .btn href={ "/books/" (b.id) "/file" } { "Download " (b.format) }
+            div .hero-inner {
+                @if b.cover.is_some() { img .hero-cover src=(cover_url) alt=""; }
+                    @else { div .hero-cover .cover-ph { span { (b.format) } } }
+                div .hero-info {
+                    h1 { (b.title) }
+                    @if let Some(s) = &b.series {
+                        p .series-line {
+                            a href={ "/collection/series/" (urlenc(s)) } { (s) }
+                            @if let Some(i) = b.series_index { ", Book " (fmt_index(i)) }
+                        }
+                    }
+                    @if let Some(a) = &b.author { p .author { (a) } }
+                    div .path-chip {
+                        span .icon { (maud::PreEscaped(crate::icons::FOLDER)) }
+                        span { (path) }
+                    }
+                    div .chip-row {
+                        span .chip .outline .on[b.monitored == 1] {
+                            span .icon { (maud::PreEscaped(crate::icons::EYE)) }
+                            @if b.monitored == 1 { "Monitored" } @else { "Unmonitored" }
+                        }
+                        span .chip .outline { (b.format) }
+                        @if let Some(s) = b.size { span .chip .outline { (s / 1024) " KB" } }
+                        @if let Some(i) = &b.isbn { span .chip .outline { "ISBN " (i) } }
+                    }
+                    @if let Some(d) = &b.description {
+                        input #desc-more type="checkbox" hidden;
+                        p .desc { (d) }
+                        @if d.len() > 350 { label .toolbar-btn .show-more for="desc-more" { span .more { "Show More" } span .less { "Show Less" } } }
+                    }
+                }
             }
+        }
+        div .tabs {
+            a .tab .active[tab == "details"] href={ "/books/" (b.id) "?tab=details" } { "Details" }
+            a .tab .active[tab == "files"] href={ "/books/" (b.id) "?tab=files" } { "Files" }
+            a .tab .active[tab == "history"] href={ "/books/" (b.id) "?tab=history" } { "History" }
+        }
+        @match tab {
+            "files" => {
+                table .arr-table {
+                    thead { tr { th { "Path" } th { "Format" } th { "Size" } th { "Added" } } }
+                    tbody { tr {
+                        td .t-muted { (path) }
+                        td { span .chip { (b.format) } }
+                        td .t-muted { @if let Some(s) = b.size { (s / 1024) " KB" } }
+                        td .t-muted { (added) }
+                    } }
+                }
+            }
+            "history" => {
+                @if history.is_empty() { p .muted { "No download history for this book." } }
+                @else {
+                    table .arr-table {
+                        thead { tr { th { "Release" } th { "Updated" } th { "Status" } } }
+                        tbody {
+                            @for h in &history {
+                                @let st: String = h.get("state");
+                                tr {
+                                    td .t-title { (h.get::<String, _>("title")) }
+                                    td .t-muted { (h.get::<String, _>("updated_at")) }
+                                    td { span .status-badge .completed[st == "imported"] .failed[st == "failed"] .downloading[st != "imported" && st != "failed"] { (st) } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {
+                div .cards {
+                    div .statcard {
+                        span .k { "Author" }
+                        span .v { @if let Some(a) = &b.author { a href={ "/collection/author/" (urlenc(a)) } { (a) } } @else { "Unknown" } }
+                    }
+                    div .statcard {
+                        span .k { "Publication" }
+                        span .v { (b.format) @if let Some(s) = b.size { " · " (s / 1024) " KB" } @if let Some(i) = &b.isbn { " · ISBN " (i) } }
+                    }
+                    div .statcard {
+                        span .k { "Series" }
+                        span .v {
+                            @if let Some(s) = &b.series {
+                                a href={ "/collection/series/" (urlenc(s)) } { (s) }
+                                @if let Some(i) = b.series_index { " #" (fmt_index(i)) }
+                            } @else { "—" }
+                        }
+                    }
+                    div .statcard { span .k { "Added" } span .v { (added) } }
+                }
+            }
+        }
+        article .detail {
 
             details .panel {
                 summary .toolbar-btn { "Edit" }
@@ -889,9 +1023,6 @@ pub async fn book_detail(State(state): State<AppState>, Path(id): Path<i64>) -> 
                     }
                     button .btn type="submit" { "Save" }
                 }
-            }
-            form .inline hx-post={ "/books/" (b.id) "/rescan" } hx-swap="outerHTML" hx-target="this" {
-                button .toolbar-btn type="submit" { "Rescan metadata" }
             }
             details .panel {
                 summary .toolbar-btn .danger-text { "Delete" }

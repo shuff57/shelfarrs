@@ -76,6 +76,12 @@ pub mod icons {
     pub const BOOK_OPEN: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z"/></svg>"#;
     pub const ROBOT: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 4v4M8 4h8"/><path d="M9 13.5h.01M15 13.5h.01"/><path d="M9 17h6"/></svg>"#;
     pub const CODE: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6l-6 6 6 6M16 6l6 6-6 6"/></svg>"#;
+    pub const PENCIL: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l4 4L8 20l-5 1 1-5z"/></svg>"#;
+    pub const TRASH: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15M10 11v6M14 11v6"/></svg>"#;
+    pub const EYE: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>"#;
+    pub const ARROW_LEFT: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>"#;
+    pub const DOWNLOAD: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M6 11l6 6 6-6M4 21h16"/></svg>"#;
+    pub const FOLDER: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>"#;
 }
 pub const LOGO: &str = r##"<svg viewBox="0 0 24 24" fill="none" stroke="#2196f3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z"/></svg>"##;
 
@@ -110,10 +116,12 @@ pub fn page(title: &str, body: Markup) -> Markup {
             | "Account"
             | "General"
     );
+    // Sub-menus stay in the DOM and animate open/closed: pinned open while the
+    // section is active, auto-revealed on hover otherwise.
     let nav = html! {
         div .section {
-            (nav_item("/?group=books", "Books", icons::BOOKS, lib, None))
-            @if lib {
+            div .navgroup .open[lib] {
+                (nav_item("/?group=books", "Books", icons::BOOKS, lib, None))
                 div .subnav {
                     (sub_item("/?group=books", "Books", title == "Library"))
                     (sub_item("/?group=authors", "Authors", title == "Authors"))
@@ -129,8 +137,8 @@ pub fn page(title: &str, body: Markup) -> Markup {
             (nav_item("/wanted", "Wanted", icons::HEART, title == "Wanted", Some("wanted")))
         }
         div .section {
-            (nav_item("/settings", "Settings", icons::GEAR, settings, None))
-            @if settings {
+            div .navgroup .open[settings] {
+                (nav_item("/settings", "Settings", icons::GEAR, settings, None))
                 div .subnav {
                     (sub_item("/settings?tab=plugins", "Plugins", title == "Plugins" || title == "Settings"))
                     (sub_item("/settings?tab=indexers", "Indexers", title == "Indexers"))
