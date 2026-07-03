@@ -180,15 +180,13 @@ fn poster_card(b: &Book, info: bool) -> maud::Markup {
                 }
                 div .status-bar {}
             }
+            // captions only with the info toggle — bare posters by default, like the arr grid
             @if info {
                 div .under {
                     span .title { (b.title) }
                     @if let Some(a) = &b.author { span .author { (a) } }
                     span .author { (b.format) @if let Some(s) = b.size { " · " (s / 1024) " KB" } }
                 }
-            } @else {
-                span .title { (b.title) }
-                @if let Some(a) = &b.author { span .author { (a) } }
             }
         }
     }

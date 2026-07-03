@@ -153,8 +153,8 @@ pub fn page(title: &str, body: Markup) -> Markup {
                 }
                 div .nav-actions {
                     div .topsearch {
-                        span .icon { (maud::PreEscaped(icons::SEARCH)) }
-                        input type="search" name="q" placeholder="Search your library..."
+                        label .icon for="topsearch-q" { (maud::PreEscaped(icons::SEARCH)) }
+                        input #topsearch-q type="search" name="q" placeholder="Search your library..."
                             hx-get="/search/suggest" hx-trigger="input changed delay:250ms, focus"
                             hx-target="#suggest" autocomplete="off";
                         div #suggest .suggest {}
