@@ -1,4 +1,5 @@
 mod auth;
+mod autosearch;
 mod books;
 mod discovery;
 mod downloads;
@@ -9,6 +10,7 @@ mod meta;
 mod opds;
 mod plugin;
 mod reader;
+mod score;
 mod source;
 
 use axum::{
@@ -98,7 +100,14 @@ pub fn page(title: &str, body: Markup) -> Markup {
     let lib = matches!(title, "Library" | "Authors" | "Series" | "Collection");
     let settings = matches!(
         title,
-        "Settings" | "Plugins" | "Indexers" | "Download Clients" | "Users" | "Account" | "General"
+        "Settings"
+            | "Plugins"
+            | "Indexers"
+            | "Download Clients"
+            | "Quality Profiles"
+            | "Users"
+            | "Account"
+            | "General"
     );
     let nav = html! {
         div .section {
@@ -125,6 +134,7 @@ pub fn page(title: &str, body: Markup) -> Markup {
                     (sub_item("/settings?tab=plugins", "Plugins", title == "Plugins" || title == "Settings"))
                     (sub_item("/settings?tab=indexers", "Indexers", title == "Indexers"))
                     (sub_item("/settings?tab=clients", "Download Clients", title == "Download Clients"))
+                    (sub_item("/settings?tab=profiles", "Quality Profiles", title == "Quality Profiles"))
                     (sub_item("/settings?tab=users", "Users", title == "Users" || title == "Account"))
                     (sub_item("/settings?tab=general", "General", title == "General"))
                 }
@@ -189,11 +199,12 @@ async fn settings_page(
     Query(q): Query<TabQ>,
 ) -> Html<String> {
     let tab = q.tab.as_deref().unwrap_or("plugins");
-    let known = ["plugins", "indexers", "clients", "users", "general"];
+    let known = ["plugins", "indexers", "clients", "profiles", "users", "general"];
     let tab = if known.contains(&tab) { tab } else { "plugins" };
     let (title, content) = match tab {
         "indexers" => ("Indexers", indexer::indexers_body(&state, q.preset.as_deref()).await),
         "clients" => ("Download Clients", downloads::clients_body(&state).await),
+        "profiles" => ("Quality Profiles", score::profiles_body(&state).await),
         "users" => ("Users", auth::users_body(&state, &me).await),
         "general" => ("General", general_body(&state)),
         _ => ("Plugins", install::plugins_body(&state).await),
@@ -212,6 +223,7 @@ async fn settings_page(
             (tab_link("plugins", icons::BOOKS, "Plugins"))
             (tab_link("indexers", icons::SEARCH, "Indexers"))
             (tab_link("clients", icons::FOLDER_OPEN, "Download Clients"))
+            (tab_link("profiles", icons::HEART, "Quality Profiles"))
             (tab_link("users", icons::USER, "Users"))
             (tab_link("general", icons::GEAR, "General"))
         }
@@ -376,6 +388,7 @@ async fn main() -> anyhow::Result<()> {
     jobs::enqueue(&state.pool, "scan", &serde_json::json!({})).await?;
     tokio::spawn(jobs::worker(state.clone()));
     tokio::spawn(downloads::monitor(state.clone()));
+    tokio::spawn(autosearch::worker(state.clone()));
 
     let app = Router::new()
         .route("/", get(books::library))
@@ -406,6 +419,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/following/remove", post(discovery::follow_remove))
         .route("/following/import", post(discovery::import_list))
         .route("/settings", get(settings_page))
+        .route("/books/{id}/auto-search", post(autosearch::search_now))
+        .route("/settings/profiles/add", post(score::add))
+        .route("/settings/profiles/delete", post(score::delete))
+        .route("/settings/profiles/default", post(score::make_default))
         .route("/settings/clients/add", post(downloads::add))
         .route("/settings/clients/delete", post(downloads::delete))
         .route("/settings/clients/test", post(downloads::test_handler))

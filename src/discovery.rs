@@ -91,6 +91,30 @@ pub async fn following(State(state): State<AppState>) -> Html<String> {
                 }
             }
         }
+        @let wanted = crate::autosearch::below_cutoff(&state).await;
+        @if !wanted.is_empty() {
+            h2 { "Below cutoff (" (wanted.len()) ")" }
+            p .muted { "Monitored books whose format is below the profile cutoff — auto-searched every 6 hours." }
+            table .arr-table {
+                thead { tr { th { "Title" } th { "Author" } th { "Current" } th {} } }
+                tbody {
+                    @for b in &wanted {
+                        tr {
+                            td .t-title { a href={ "/books/" (b.id) } { (b.title) } }
+                            td .t-muted { (b.author.clone().unwrap_or_default()) }
+                            td { span .chip { (b.format) } }
+                            td {
+                                form hx-post={ "/books/" (b.id) "/auto-search" } hx-swap="outerHTML" hx-target="this" .addform {
+                                    button .btn .btn-sm type="submit" {
+                                        span .icon { (maud::PreEscaped(crate::icons::ROBOT)) } "Search"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         h2 { "Followed authors" }
         @if authors.is_empty() { p .muted { "Follow authors to track their books." } }
         div .results {
