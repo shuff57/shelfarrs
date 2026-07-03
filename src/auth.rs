@@ -2,7 +2,7 @@
 //! a gate that also accepts HTTP Basic so OPDS readers can authenticate. The library
 //! is shared; only login and reading progress are per-user.
 
-use crate::{page, AppState};
+use crate::AppState;
 use argon2::password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use axum::{
@@ -231,25 +231,24 @@ pub async fn logout(State(state): State<AppState>, req: Request) -> Response {
 
 // ---- admin: user management ----
 
-pub async fn users_page(
-    State(state): State<AppState>,
-    Extension(me): Extension<CurrentUser>,
-) -> Html<String> {
+/// Old direct URL — the page now lives as a Settings tab.
+pub async fn users_page() -> axum::response::Redirect {
+    axum::response::Redirect::permanent("/settings?tab=users")
+}
+
+pub async fn users_body(state: &AppState, me: &CurrentUser) -> maud::Markup {
     // Non-admins just see their own account + sign out — no user list, no controls.
     if !me.is_admin {
-        let body = html! {
-            h1 { "Account" }
+        return html! {
             p { "Signed in as " strong { (me.username) } "." }
             p style="margin-top:1rem" { a href="/logout" { "Sign out" } }
         };
-        return Html(page("Account", body).into_string());
     }
     let rows = sqlx::query("SELECT username, is_admin FROM users ORDER BY username")
         .fetch_all(&state.pool)
         .await
         .unwrap_or_default();
-    let body = html! {
-        h1 { "Users" }
+    html! {
         div .results {
             @for r in &rows {
                 @let name: String = r.get("username");
@@ -272,8 +271,7 @@ pub async fn users_page(
             button .btn type="submit" { "Create" }
         }
         p style="margin-top:1rem" { a href="/logout" { "Sign out" } }
-    };
-    Html(page("Users", body).into_string())
+    }
 }
 
 pub async fn user_add(

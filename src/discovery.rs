@@ -56,38 +56,69 @@ pub async fn acquire(state: &AppState, query: &str) -> Result<()> {
 
 pub async fn following(State(state): State<AppState>) -> Html<String> {
     let authors: Vec<String> = get_json(&state, FOLLOWS_KEY).await;
+    let pending = sqlx::query(
+        "SELECT payload, status FROM jobs WHERE kind='acquire' AND status IN ('queued','running','failed')
+         ORDER BY id DESC LIMIT 50",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
     let body = html! {
-        h1 { "Following" }
-        section {
-            h2 { "Authors" }
-            @if authors.is_empty() { p .muted { "Follow authors to track their books." } }
-            div .results {
-                @for a in &authors {
-                    div .result {
-                        span .title { (a) }
-                        a .btn href={ "/discover?q=" (urlenc(a)) } { "Browse" }
-                        form .inline hx-post="/following/remove" hx-swap="none" {
-                            input type="hidden" name="author" value=(a);
-                            button .link { "unfollow" }
+        header .pagehead {
+            span .ph-icon { (maud::PreEscaped(crate::icons::HEART)) }
+            h1 { "Wanted" }
+        }
+        @if !pending.is_empty() {
+            table .arr-table {
+                thead { tr { th { "Title" } th { "Status" } } }
+                tbody {
+                    @for r in &pending {
+                        @let payload: String = r.get("payload");
+                        @let status: String = r.get("status");
+                        @let title = serde_json::from_str::<serde_json::Value>(&payload).ok()
+                            .and_then(|v| v.get("query").and_then(|q| q.as_str()).map(String::from))
+                            .unwrap_or_else(|| "…".into());
+                        tr {
+                            td .t-title { (title) }
+                            td {
+                                span .status-badge
+                                    .queued[status == "queued"]
+                                    .downloading[status == "running"]
+                                    .failed[status == "failed"] { (status) }
+                            }
                         }
                     }
                 }
             }
-            form .search action="/following/add" method="post" {
-                input type="text" name="author" placeholder="Author name…" required;
-                button .btn type="submit" { "Follow" }
+        }
+        h2 { "Followed authors" }
+        @if authors.is_empty() { p .muted { "Follow authors to track their books." } }
+        div .results {
+            @for a in &authors {
+                div .result {
+                    span .title { (a) }
+                    a .btn .btn-sm href={ "/add-new?q=" (urlenc(a)) } {
+                        span .icon { (maud::PreEscaped(crate::icons::ROBOT)) } "Search"
+                    }
+                    form .inline hx-post="/following/remove" hx-swap="none" {
+                        input type="hidden" name="author" value=(a);
+                        button .link { "unfollow" }
+                    }
+                }
             }
         }
-        section {
-            h2 { "Import list" }
-            p .muted { "One title per line — each is searched and the best match is grabbed." }
-            form action="/following/import" method="post" {
-                textarea name="titles" rows="6" style="width:100%;background:#1b1f26;color:inherit;border:1px solid #2a2f38;border-radius:6px;padding:.6rem" placeholder="The Hobbit\nDune\n…" {}
-                div style="margin-top:.6rem" { button .btn type="submit" { "Import all" } }
-            }
+        form .search action="/following/add" method="post" {
+            input type="text" name="author" placeholder="Author name…" required;
+            button .btn type="submit" { "Follow" }
+        }
+        h2 { "Manual import" }
+        p .muted { "One title per line — each is searched and the best match is grabbed." }
+        form action="/following/import" method="post" {
+            textarea .ta name="titles" rows="6" placeholder="The Hobbit\nDune\n…" {}
+            div style="margin-top:.6rem" { button .btn type="submit" { "Import all" } }
         }
     };
-    Html(page("Following", body).into_string())
+    Html(page("Wanted", body).into_string())
 }
 
 fn urlenc(s: &str) -> String {

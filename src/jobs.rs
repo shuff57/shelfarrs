@@ -1,8 +1,12 @@
 //! In-process background queue: a `jobs` table + one tokio worker that claims,
 //! runs, and finalizes jobs. No Redis.
 
-use crate::AppState;
+use crate::{page, AppState};
 use anyhow::Result;
+use axum::extract::{Path, Query, State};
+use axum::response::Html;
+use maud::{html, Markup};
+use serde::Deserialize;
 use sqlx::{Row, SqlitePool};
 use std::time::Duration;
 
@@ -73,6 +77,138 @@ pub async fn worker(state: AppState) {
             }
         }
     }
+}
+
+// ---- Activity UI (jobs table, arr-style) ----
+
+/// Human title for a job row, from its payload.
+fn job_title(kind: &str, payload: &str) -> String {
+    let v: serde_json::Value = serde_json::from_str(payload).unwrap_or_default();
+    match kind {
+        "download" => v.get("title").and_then(|t| t.as_str()).unwrap_or("Download").to_string(),
+        "acquire" => v
+            .get("query")
+            .and_then(|q| q.as_str())
+            .map(|q| format!("Acquire: {q}"))
+            .unwrap_or_else(|| "Acquire".into()),
+        "scan" => "Library scan".into(),
+        other => other.to_string(),
+    }
+}
+
+/// (chip class, label, progress %) per job status — colors match the arr legend.
+fn job_status(kind: &str, status: &str) -> (&'static str, &'static str, u8) {
+    match status {
+        "queued" => ("queued", "Queued", 0),
+        "running" if kind == "scan" => ("processing", "Processing", 50),
+        "running" => ("downloading", "Downloading", 50),
+        "done" => ("completed", "Completed", 100),
+        _ => ("failed", "Failed", 100),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ActivityQ {
+    pub f: Option<String>,
+}
+
+pub async fn activity_page(State(state): State<AppState>, Query(q): Query<ActivityQ>) -> Html<String> {
+    let rows = sqlx::query(
+        "SELECT id, kind, payload, status, error, updated_at FROM jobs ORDER BY id DESC LIMIT 200",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    let filter = q.f.unwrap_or_default().to_lowercase();
+
+    let body = html! {
+        header .pagehead {
+            span .ph-icon { (maud::PreEscaped(crate::icons::ACTIVITY)) }
+            h1 { "Activity" }
+            form .headfilter action="/activity" method="get" {
+                input type="search" name="f" value=(filter) placeholder="Filter activity...";
+            }
+            a .toolbar-btn href="/activity" { span .icon { (maud::PreEscaped(crate::icons::REFRESH)) } "Refresh" }
+        }
+        @if rows.is_empty() {
+            div .empty-state {
+                span .eicon { (maud::PreEscaped(crate::icons::ACTIVITY)) }
+                p .empty-title { "No activity" }
+                p .empty-message { "Downloads, imports and scans will show up here." }
+            }
+        } @else {
+            table .arr-table {
+                thead { tr { th { "Title" } th { "Type" } th { "Progress" } th { "Updated" } th { "Status" } } }
+                tbody {
+                    @for r in &rows {
+                        @let kind: String = r.get("kind");
+                        @let payload: String = r.get("payload");
+                        @let status: String = r.get("status");
+                        @let error: Option<String> = r.get("error");
+                        @let title = job_title(&kind, &payload);
+                        @let (class, label, pct) = job_status(&kind, &status);
+                        @if filter.is_empty() || title.to_lowercase().contains(&filter) {
+                            tr {
+                                td .t-title { (title) }
+                                td .t-muted { (kind) }
+                                td { div .progress { div .bar .{ "p-" (class) } style={ "width:" (pct) "%" } {} } }
+                                td .t-muted { (r.get::<String, _>("updated_at")) }
+                                td {
+                                    span .status-badge .{ (class) } title=[error] { (label) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    Html(page("Activity", body).into_string())
+}
+
+/// Sidebar count pills, loaded via HTMX. Empty response = no pill.
+pub async fn nav_badge(State(state): State<AppState>, Path(id): Path<String>) -> Html<String> {
+    let n: i64 = match id.as_str() {
+        "activity" => sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','running')")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0),
+        "wanted" => sqlx::query_scalar(
+            "SELECT COUNT(*) FROM jobs WHERE kind='acquire' AND status IN ('queued','running')",
+        )
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0),
+        _ => 0,
+    };
+    if n > 0 {
+        Html(html! { span .pill { (n) } }.into_string())
+    } else {
+        Html(String::new())
+    }
+}
+
+/// Topbar bell dropdown: the latest finished/failed jobs.
+pub async fn notif_recent(State(state): State<AppState>) -> Html<String> {
+    let rows = sqlx::query(
+        "SELECT kind, payload, status FROM jobs WHERE status IN ('done','failed') ORDER BY id DESC LIMIT 8",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    let m: Markup = html! {
+        p .drophead { "Recent Activity" }
+        @if rows.is_empty() { p .muted { "Nothing yet." } }
+        @for r in &rows {
+            @let kind: String = r.get("kind");
+            @let status: String = r.get("status");
+            div .notif {
+                span .dot .ok[status == "done"] .bad[status != "done"] {}
+                span { (job_title(&kind, &r.get::<String, _>("payload"))) }
+            }
+        }
+    };
+    Html(m.into_string())
 }
 
 async fn run(state: &AppState, job: &Job) -> Result<()> {

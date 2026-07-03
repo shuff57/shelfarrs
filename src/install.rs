@@ -4,7 +4,7 @@
 
 use crate::auth::{deny_non_admin, CurrentUser};
 use crate::plugin::{scan_installed, PluginManifest};
-use crate::{page, AppState};
+use crate::AppState;
 use anyhow::{anyhow, bail, Context, Result};
 use axum::{
     extract::State,
@@ -188,24 +188,27 @@ fn hex(bytes: &[u8]) -> String {
 
 // ---- Settings -> Plugins UI ----
 
-pub async fn plugins_page(State(state): State<AppState>) -> Html<String> {
+/// Old direct URL — the page now lives as a Settings tab.
+pub async fn plugins_page() -> Redirect {
+    Redirect::permanent("/settings?tab=plugins")
+}
+
+pub async fn plugins_body(state: &AppState) -> maud::Markup {
     let installed: Vec<PluginManifest> =
         scan_installed(&state.plugins_dir).into_iter().map(|i| i.manifest).collect();
     let installed_ver: std::collections::HashMap<&str, &str> =
         installed.iter().map(|m| (m.id.as_str(), m.version.as_str())).collect();
 
-    let repos = repo_urls(&state).await;
+    let repos = repo_urls(state).await;
     let mut available: Vec<RepoEntry> = vec![];
     for url in &repos {
-        match fetch_index(&state, url).await {
+        match fetch_index(state, url).await {
             Ok(idx) => available.extend(idx.plugins),
             Err(e) => tracing::warn!("index {url} failed: {e}"),
         }
     }
 
-    let body = html! {
-        h1 { "Plugins" }
-
+    html! {
         section .repos {
             h2 { "Repositories" }
             @if repos.is_empty() { p .muted { "No repositories yet. Add a repo index URL below." } }
@@ -272,8 +275,7 @@ pub async fn plugins_page(State(state): State<AppState>) -> Html<String> {
                 }
             }
         }
-    };
-    Html(page("Plugins", body).into_string())
+    }
 }
 
 #[derive(Deserialize)]

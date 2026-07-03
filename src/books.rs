@@ -150,40 +150,397 @@ async fn all_books(state: &AppState) -> Result<Vec<Book>> {
 
 // ---- HTTP handlers ----
 
-pub async fn library(State(state): State<AppState>) -> Html<String> {
-    let books = all_books(&state).await.unwrap_or_default();
-    let body = if books.is_empty() {
-        html! {
-            section .empty {
-                h1 { "Your library is empty" }
-                p { "Scan " code { "BOOKS_DIR" } " or " a href="/discover" { "discover books" } "." }
+#[derive(Deserialize)]
+pub struct LibQ {
+    pub group: Option<String>,
+    pub view: Option<String>,
+    pub info: Option<u8>,
+    pub sort: Option<String>,
+    pub dir: Option<String>,
+}
+
+/// One poster card (grid mode) — cover, status underline, hover overlay.
+fn poster_card(b: &Book, info: bool) -> maud::Markup {
+    html! {
+        a .card href={ "/books/" (b.id) } {
+            div .poster {
+                @if b.cover.is_some() {
+                    img .cover src={ "/books/" (b.id) "/cover" } alt="" loading="lazy";
+                } @else {
+                    div .cover-ph { span { (b.format) } }
+                }
+                div .overlay {
+                    span .o-title { (b.title) }
+                    @if let Some(a) = &b.author { span .o-author { (a) } }
+                }
+                div .status-bar {}
+            }
+            @if info {
+                div .under {
+                    span .title { (b.title) }
+                    @if let Some(a) = &b.author { span .author { (a) } }
+                    span .author { (b.format) @if let Some(s) = b.size { " · " (s / 1024) " KB" } }
+                }
+            } @else {
+                span .title { (b.title) }
+                @if let Some(a) = &b.author { span .author { (a) } }
             }
         }
-    } else {
-        html! {
-            header .pagehead {
-                h1 { "Library" }
-                span .chip .primary { (books.len()) @if books.len() == 1 { " Book" } @else { " Books" } }
+    }
+}
+
+/// The fixed bottom status legend, arr-style.
+fn legend() -> maud::Markup {
+    html! {
+        footer .legend {
+            span .li { span .dot style="background:#3498db" {} "Downloading" }
+            span .li { span .dot style="background:#e74c3c" {} "Missing" }
+            span .li { span .dot style="background:#2ecc71" {} "Downloaded" }
+        }
+    }
+}
+
+fn toolbar_url(group: &str, view: &str, info: bool, sort: &str, dir: &str) -> String {
+    format!("/?group={group}&view={view}&info={}&sort={sort}&dir={dir}", info as u8)
+}
+
+pub async fn library(State(state): State<AppState>, Query(q): Query<LibQ>) -> Html<String> {
+    let group = q.group.as_deref().unwrap_or("books").to_string();
+    let view = q.view.as_deref().unwrap_or("grid").to_string();
+    let info = q.info.unwrap_or(0) == 1;
+    let sort = q.sort.as_deref().unwrap_or("title").to_string();
+    let dir = q.dir.as_deref().unwrap_or("asc").to_string();
+
+    let mut books = all_books(&state).await.unwrap_or_default();
+    match sort.as_str() {
+        "author" => books.sort_by(|a, b| a.author.cmp(&b.author)),
+        "added" => books.sort_by_key(|b| -b.id),
+        _ => {} // already title-ordered from SQL
+    }
+    if dir == "desc" {
+        books.reverse();
+    }
+
+    let title = match group.as_str() {
+        "authors" => "Authors",
+        "series" => "Series",
+        _ => "Library",
+    };
+
+    // toolbar (view toggle · info toggle · count · group dropdown · refresh | sort)
+    let count_label = match group.as_str() {
+        "authors" => {
+            let mut set: Vec<&str> =
+                books.iter().filter_map(|b| b.author.as_deref()).collect();
+            set.sort();
+            set.dedup();
+            format!("{} Authors", set.len())
+        }
+        "series" => "0 Series".into(),
+        _ => format!("{} Book{}", books.len(), if books.len() == 1 { "" } else { "s" }),
+    };
+    let flip = |d: &str| if d == "asc" { "desc" } else { "asc" };
+    let toolbar = html! {
+        div .toolbar {
+            div .toolbar-left {
+                a .toolbar-btn .active[view == "grid"] title="Grid"
+                    href=(toolbar_url(&group, "grid", info, &sort, &dir)) { span .icon { (maud::PreEscaped(crate::icons::GRID)) } }
+                a .toolbar-btn .active[view == "list"] title="List"
+                    href=(toolbar_url(&group, "list", info, &sort, &dir)) { span .icon { (maud::PreEscaped(crate::icons::LIST)) } }
+                a .toolbar-btn .active[info] title="Details"
+                    href=(toolbar_url(&group, &view, !info, &sort, &dir)) { span .icon { (maud::PreEscaped(crate::icons::INFO)) } }
+                span .count-badge { (count_label) }
+                details .menu {
+                    summary .toolbar-btn {
+                        @match group.as_str() { "authors" => "Authors", "series" => "Series", _ => "Books" }
+                        span .icon { (maud::PreEscaped(crate::icons::CARET_DOWN)) }
+                    }
+                    div .dropdown {
+                        a href=(toolbar_url("books", &view, info, &sort, &dir)) { "Books" }
+                        a href=(toolbar_url("authors", &view, info, &sort, &dir)) { "Authors" }
+                        a href=(toolbar_url("series", &view, info, &sort, &dir)) { "Series" }
+                    }
+                }
+                form .inline action="/library-import/scan" method="post" {
+                    button .toolbar-btn type="submit" { span .icon { (maud::PreEscaped(crate::icons::REFRESH)) } "Refresh" }
+                }
             }
-            section .grid {
-                @for b in &books {
-                    a .card href={ "/books/" (b.id) } {
-                        div .poster {
-                            @if b.cover.is_some() {
-                                img .cover src={ "/books/" (b.id) "/cover" } alt="" loading="lazy";
-                            } @else {
-                                div .cover-ph { span { (b.format) } }
-                            }
-                            div .status-bar {}
-                        }
-                        span .title { (b.title) }
-                        @if let Some(a) = &b.author { span .author { (a) } }
+            div .toolbar-right {
+                details .menu {
+                    summary .toolbar-btn { "Sort: " (sort) span .icon { (maud::PreEscaped(crate::icons::CARET_DOWN)) } }
+                    div .dropdown {
+                        a href=(toolbar_url(&group, &view, info, "title", flip(&dir))) { "Title" }
+                        a href=(toolbar_url(&group, &view, info, "author", flip(&dir))) { "Author" }
+                        a href=(toolbar_url(&group, &view, info, "added", flip(&dir))) { "Added" }
                     }
                 }
             }
         }
     };
-    Html(page("Library", body).into_string())
+
+    let content = if books.is_empty() {
+        html! {
+            div .empty-state {
+                span .eicon { (maud::PreEscaped(crate::icons::BOOK_OPEN)) }
+                p .empty-title { "Your library is empty" }
+                p .empty-message { "Scan your books folder or add something new." }
+                div .empty-actions { a .btn href="/add-new" { "Add New" } }
+            }
+        }
+    } else {
+        match group.as_str() {
+            "authors" => {
+                let mut authors: Vec<(String, Vec<&Book>)> = vec![];
+                for b in &books {
+                    let name = b.author.clone().unwrap_or_else(|| "Unknown".into());
+                    match authors.iter_mut().find(|(n, _)| *n == name) {
+                        Some((_, v)) => v.push(b),
+                        None => authors.push((name, vec![b])),
+                    }
+                }
+                authors.sort_by(|a, b| a.0.cmp(&b.0));
+                html! {
+                    section .grid {
+                        @for (name, list) in &authors {
+                            a .card href={ "/collection/author/" (urlenc(name)) } {
+                                div .poster {
+                                    @if let Some(c) = list.iter().find(|b| b.cover.is_some()) {
+                                        img .cover src={ "/books/" (c.id) "/cover" } alt="" loading="lazy";
+                                    } @else {
+                                        div .cover-ph { span { "—" } }
+                                    }
+                                    div .overlay { span .o-title { (name) } }
+                                    div .status-bar {}
+                                }
+                                span .title { (name) }
+                                span .author { (list.len()) " book" @if list.len() != 1 { "s" } }
+                            }
+                        }
+                    }
+                }
+            }
+            "series" => html! {
+                div .empty-state {
+                    span .eicon { (maud::PreEscaped(crate::icons::BOOKS)) }
+                    p .empty-title { "No series information" }
+                    p .empty-message { "Series metadata isn't extracted yet — books with series data will group here." }
+                }
+            },
+            _ if view == "list" => html! {
+                table .arr-table {
+                    thead { tr { th {} th { "Title" } th { "Author" } th { "Format" } th { "Size" } th {} } }
+                    tbody {
+                        @for b in &books {
+                            tr {
+                                td .t-thumb {
+                                    @if b.cover.is_some() { img src={ "/books/" (b.id) "/cover" } alt=""; }
+                                }
+                                td .t-title { a href={ "/books/" (b.id) } { (b.title) } }
+                                td .t-muted { (b.author.clone().unwrap_or_default()) }
+                                td .t-muted { (b.format) }
+                                td .t-muted { @if let Some(s) = b.size { (s / 1024) " KB" } }
+                                td { a .btn .btn-sm href={ "/read/" (b.id) } { "Read" } }
+                            }
+                        }
+                    }
+                }
+            },
+            _ => html! {
+                section .grid {
+                    @for b in &books { (poster_card(b, info)) }
+                }
+            },
+        }
+    };
+
+    let body = html! { (toolbar) (content) (legend()) };
+    Html(page(title, body).into_string())
+}
+
+/// Author (or later: series) collection — hero header + that group's books.
+pub async fn collection(
+    State(state): State<AppState>,
+    Path((kind, name)): Path<(String, String)>,
+) -> Html<String> {
+    let books: Vec<Book> = all_books(&state)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|b| kind == "author" && b.author.as_deref() == Some(name.as_str()))
+        .collect();
+    let body = html! {
+        section .hero {
+            h1 { (name) }
+            p .muted { (books.len()) " book" @if books.len() != 1 { "s" } " in library" }
+        }
+        section .grid {
+            @for b in &books { (poster_card(b, false)) }
+        }
+        (legend())
+    };
+    Html(page("Collection", body).into_string())
+}
+
+/// Month calendar of when books were added to the library.
+#[derive(Deserialize)]
+pub struct CalQ {
+    pub m: Option<String>, // YYYY-MM
+}
+
+pub async fn calendar(State(state): State<AppState>, Query(q): Query<CalQ>) -> Html<String> {
+    // Current month from the DB clock (no chrono dep).
+    let now: String = sqlx::query_scalar("SELECT strftime('%Y-%m','now')")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or_else(|_| "1970-01".into());
+    let month = q.m.unwrap_or(now.clone());
+    let (prev, next): (String, String) = {
+        let p = sqlx::query_scalar("SELECT strftime('%Y-%m', ? || '-01', '-1 month')")
+            .bind(&month)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or_else(|_| month.clone());
+        let n = sqlx::query_scalar("SELECT strftime('%Y-%m', ? || '-01', '+1 month')")
+            .bind(&month)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or_else(|_| month.clone());
+        (p, n)
+    };
+    let days: i64 = sqlx::query_scalar("SELECT CAST(strftime('%d', ? || '-01', '+1 month', '-1 day') AS INTEGER)")
+        .bind(&month)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(30);
+    // weekday of the 1st (0=Sunday)
+    let start: i64 = sqlx::query_scalar("SELECT CAST(strftime('%w', ? || '-01') AS INTEGER)")
+        .bind(&month)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0);
+    let rows = sqlx::query(
+        "SELECT id, title, CAST(strftime('%d', added_at) AS INTEGER) AS day
+         FROM books WHERE strftime('%Y-%m', added_at) = ? ORDER BY added_at",
+    )
+    .bind(&month)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let body = html! {
+        header .pagehead {
+            span .ph-icon { (maud::PreEscaped(crate::icons::CALENDAR)) }
+            h1 { "Calendar" }
+            span .count-badge { (month) }
+            div .headbtns {
+                a .toolbar-btn href={ "/calendar?m=" (prev) } { "‹ Prev" }
+                a .toolbar-btn href="/calendar" { "Today" }
+                a .toolbar-btn href={ "/calendar?m=" (next) } { "Next ›" }
+            }
+        }
+        div .calgrid {
+            @for d in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] { div .caldow { (d) } }
+            @for _ in 0..start { div .calcell .off {} }
+            @for day in 1..=days {
+                div .calcell {
+                    span .daynum { (day) }
+                    @for r in &rows {
+                        @if r.get::<i64, _>("day") == day {
+                            a .calitem href={ "/books/" (r.get::<i64, _>("id")) } { (r.get::<String, _>("title")) }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    Html(page("Calendar", body).into_string())
+}
+
+/// Library Import: the scan surface — root folder + Scan Now + recent scans.
+pub async fn library_import(State(state): State<AppState>) -> Html<String> {
+    let scans = sqlx::query(
+        "SELECT status, updated_at FROM jobs WHERE kind='scan' ORDER BY id DESC LIMIT 5",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    let body = html! {
+        header .pagehead {
+            span .ph-icon { (maud::PreEscaped(crate::icons::FOLDER_OPEN)) }
+            h1 { "Library Import" }
+        }
+        p .muted { "Import existing organized ebooks from your books folder." }
+        div .cards {
+            div .statcard {
+                span .k { "Root folder" }
+                span .v { code { (state.books_dir.display()) } }
+            }
+        }
+        form action="/library-import/scan" method="post" style="margin-top:1rem" {
+            button .btn type="submit" { "Scan Now" }
+        }
+        h2 { "Recent scans" }
+        @if scans.is_empty() { p .muted { "No scans yet." } }
+        div .results {
+            @for s in &scans {
+                @let status: String = s.get("status");
+                div .result {
+                    span .title { "Library scan" }
+                    span .author { (s.get::<String, _>("updated_at")) }
+                    span .status-badge .completed[status == "done"] .failed[status == "failed"] .queued[status == "queued" || status == "running"] { (status) }
+                }
+            }
+        }
+    };
+    Html(page("Library Import", body).into_string())
+}
+
+pub async fn scan_now(State(state): State<AppState>) -> axum::response::Redirect {
+    let _ = crate::jobs::enqueue(&state.pool, "scan", &serde_json::json!({})).await;
+    axum::response::Redirect::to("/activity")
+}
+
+/// Topbar live search suggestions (HTMX).
+#[derive(Deserialize)]
+pub struct SuggestQ {
+    pub q: Option<String>,
+}
+
+pub async fn search_suggest(State(state): State<AppState>, Query(sq): Query<SuggestQ>) -> Html<String> {
+    let q = sq.q.unwrap_or_default();
+    if q.trim().is_empty() {
+        return Html(String::new());
+    }
+    let rows = sqlx::query_as::<_, Book>(
+        "SELECT id,title,author,format,size,description,cover FROM books
+         WHERE title LIKE '%'||?||'%' OR author LIKE '%'||?||'%' ORDER BY title LIMIT 6",
+    )
+    .bind(&q)
+    .bind(&q)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    let m = html! {
+        @for b in &rows {
+            a .sug href={ "/books/" (b.id) } {
+                @if b.cover.is_some() { img src={ "/books/" (b.id) "/cover" } alt=""; }
+                    @else { span .thumb-ph {} }
+                span .s-title { (b.title) }
+                @if let Some(a) = &b.author { span .s-author { (a) } }
+            }
+        }
+        @if rows.is_empty() { p .muted style="padding:.5rem .8rem" { "No matches" } }
+    };
+    Html(m.into_string())
+}
+
+fn urlenc(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 pub async fn book_detail(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
@@ -281,31 +638,64 @@ pub async fn discover(State(state): State<AppState>, Query(dq): Query<DiscoverQ>
             }
         }
     }
+    // Titles already in the library — their result cards show "Added".
+    let have: Vec<String> = sqlx::query_scalar("SELECT LOWER(title) FROM books")
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
     let body = html! {
-        form .search action="/discover" method="get" {
-            input type="search" name="q" value=(query) placeholder="Search Project Gutenberg…" autofocus;
-            button type="submit" { "Search" }
+        header .pagehead {
+            span .ph-icon { (maud::PreEscaped(crate::icons::PLUS)) }
+            h1 { "Add New Book" }
         }
-        @if !candidates.is_empty() {
-            section .results {
+        form .search .addsearch action="/add-new" method="get" {
+            input type="search" name="q" value=(query) placeholder="Search by title or author…" autofocus;
+            button .btn type="submit" { span .icon { (maud::PreEscaped(crate::icons::SEARCH)) } "Search" }
+        }
+        @if query.trim().is_empty() {
+            div .empty-state {
+                span .eicon { (maud::PreEscaped(crate::icons::SEARCH)) }
+                p .empty-title { "Search for a new book" }
+                p .empty-message { "Results come from your installed source plugins." }
+            }
+        } @else if candidates.is_empty() {
+            div .empty-state {
+                span .eicon { (maud::PreEscaped(crate::icons::BOOK_OPEN)) }
+                p .empty-title { "No results" }
+                p .empty-message { "Try a different title or author." }
+            }
+        } @else {
+            section .result-cards {
                 @for c in &candidates {
-                    div .result {
-                        span .title { (c.title) }
-                        @if let Some(a) = &c.author { span .author { (a) } }
-                        form hx-post="/add" hx-swap="outerHTML" hx-target="this" .addform {
-                            input type="hidden" name="source" value=(c.source);
-                            input type="hidden" name="title" value=(c.title);
-                            @if let Some(a) = &c.author { input type="hidden" name="author" value=(a); }
-                            input type="hidden" name="format" value=(c.format);
-                            input type="hidden" name="reference" value=(c.reference);
-                            button type="submit" .btn { "Add" }
+                    div .result-card {
+                        div .result-info {
+                            h3 { (c.title) }
+                            @if let Some(a) = &c.author { p .by { "by " (a) } }
+                            div .badges {
+                                span .chip { (c.format) }
+                                span .chip { (c.source) }
+                            }
+                        }
+                        div .result-actions {
+                            @if have.contains(&c.title.to_lowercase()) {
+                                span .btn .btn-success .added { "✓ Added" }
+                            } @else {
+                                form hx-post="/add" hx-swap="outerHTML" hx-target="this" .addform {
+                                    input type="hidden" name="source" value=(c.source);
+                                    input type="hidden" name="title" value=(c.title);
+                                    @if let Some(a) = &c.author { input type="hidden" name="author" value=(a); }
+                                    input type="hidden" name="format" value=(c.format);
+                                    input type="hidden" name="reference" value=(c.reference);
+                                    button type="submit" .btn { "+ Add to Library" }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
     };
-    Html(page("Discover", body).into_string())
+    Html(page("Add New", body).into_string())
 }
 
 pub async fn add(State(state): State<AppState>, Form(cand): Form<Candidate>) -> Html<String> {

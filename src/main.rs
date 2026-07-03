@@ -10,8 +10,10 @@ mod reader;
 mod source;
 
 use axum::{
+    extract::{Query, State},
+    response::Html,
     routing::{get, post},
-    Router,
+    Extension, Router,
 };
 use maud::{html, Markup, DOCTYPE};
 use plugin::{KvStore, SourceMap};
@@ -47,32 +49,81 @@ impl AppState {
     }
 }
 
-// Inline line-icons (stroke = currentColor), Listenarr-style sidebar glyphs.
-const ICON_LIBRARY: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>"#;
-const ICON_DISCOVER: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></svg>"#;
-const ICON_FOLLOWING: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21.2l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>"#;
-const ICON_PLUGINS: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2v6M15 2v6M5 8h14v4a7 7 0 0 1-7 7 7 7 0 0 1-7-7V8z"/><path d="M12 19v3"/></svg>"#;
-const ICON_ACCOUNT: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>"#;
-pub const LOGO: &str = r##"<svg viewBox="0 0 24 24" fill="none" stroke="#2596f3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z"/></svg>"##;
+// Inline line-icons (stroke = currentColor), Listenarr/Phosphor-style glyphs.
+pub mod icons {
+    pub const BOOKS: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h5v18H4z"/><path d="M9 3h5v18H9z"/><path d="M15.5 4.2l4.8 1.3-4.6 16.3-4.8-1.3z"/></svg>"#;
+    pub const PLUS: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>"#;
+    pub const CALENDAR: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>"#;
+    pub const FOLDER_OPEN: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v2"/><path d="M3 7h18l-2.5 11a2 2 0 0 1-2 1.5H7.5a2 2 0 0 1-2-1.5z"/></svg>"#;
+    pub const ACTIVITY: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l3-8 6 16 3-8h4"/></svg>"#;
+    pub const HEART: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21.2l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>"#;
+    pub const GEAR: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19 12a7 7 0 0 0-.14-1.4l2-1.55-2-3.46-2.36.95a7 7 0 0 0-2.42-1.4L13.7 2.6h-3.4l-.38 2.54a7 7 0 0 0-2.42 1.4l-2.36-.95-2 3.46 2 1.55a7.06 7.06 0 0 0 0 2.8l-2 1.55 2 3.46 2.36-.95a7 7 0 0 0 2.42 1.4l.38 2.54h3.4l.38-2.54a7 7 0 0 0 2.42-1.4l2.36.95 2-3.46-2-1.55A7 7 0 0 0 19 12z"/></svg>"#;
+    pub const MONITOR: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>"#;
+    pub const SEARCH: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.5-4.5"/></svg>"#;
+    pub const BELL: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 1 0-12 0c0 6-2.5 7-2.5 7h17S18 15 18 9z"/><path d="M10 20a2.2 2.2 0 0 0 4 0"/></svg>"#;
+    pub const USER: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>"#;
+    pub const GRID: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg>"#;
+    pub const LIST: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>"#;
+    pub const INFO: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></svg>"#;
+    pub const CARET_DOWN: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>"#;
+    pub const REFRESH: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 5v5h-5"/><path d="M4 19v-5h5"/><path d="M20 10a8 8 0 0 0-14.5-3.5M4 14a8 8 0 0 0 14.5 3.5"/></svg>"#;
+    pub const X: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>"#;
+    pub const BOOK_OPEN: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z"/></svg>"#;
+    pub const ROBOT: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 4v4M8 4h8"/><path d="M9 13.5h.01M15 13.5h.01"/><path d="M9 17h6"/></svg>"#;
+    pub const CODE: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6l-6 6 6 6M16 6l6 6-6 6"/></svg>"#;
+}
+pub const LOGO: &str = r##"<svg viewBox="0 0 24 24" fill="none" stroke="#2196f3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z"/></svg>"##;
 
-fn nav_item(href: &str, label: &str, icon: &str, active: bool) -> Markup {
+fn nav_item(href: &str, label: &str, icon: &str, active: bool, badge: Option<&str>) -> Markup {
     html! {
         a .item .active[active] href=(href) {
             span .icon { (maud::PreEscaped(icon)) }
-            span { (label) }
+            span .label { (label) }
+            @if let Some(id) = badge {
+                span .pill-slot hx-get={ "/nav/badge/" (id) } hx-trigger="load" hx-swap="outerHTML" {}
+            }
         }
     }
 }
 
+fn sub_item(href: &str, label: &str, active: bool) -> Markup {
+    html! { a .subitem .active[active] href=(href) { (label) } }
+}
+
 /// Wrap page chrome (topbar + sidebar + htmx) around body content. The active
-/// nav item is inferred from the page title; detail pages highlight nothing.
+/// nav item and sub-menus are inferred from the page title.
 pub fn page(title: &str, body: Markup) -> Markup {
+    let lib = matches!(title, "Library" | "Authors" | "Series" | "Collection");
+    let settings = matches!(title, "Settings" | "Plugins" | "Users" | "Account" | "General");
     let nav = html! {
-        (nav_item("/", "Library", ICON_LIBRARY, title == "Library"))
-        (nav_item("/discover", "Discover", ICON_DISCOVER, title == "Discover"))
-        (nav_item("/following", "Following", ICON_FOLLOWING, title == "Following"))
-        (nav_item("/settings/plugins", "Plugins", ICON_PLUGINS, title == "Plugins"))
-        (nav_item("/settings/users", "Account", ICON_ACCOUNT, title == "Account" || title == "Users"))
+        div .section {
+            (nav_item("/?group=books", "Books", icons::BOOKS, lib, None))
+            @if lib {
+                div .subnav {
+                    (sub_item("/?group=books", "Books", title == "Library"))
+                    (sub_item("/?group=authors", "Authors", title == "Authors"))
+                    (sub_item("/?group=series", "Series", title == "Series"))
+                }
+            }
+            (nav_item("/add-new", "Add New", icons::PLUS, title == "Add New", None))
+            (nav_item("/calendar", "Calendar", icons::CALENDAR, title == "Calendar", None))
+            (nav_item("/library-import", "Library Import", icons::FOLDER_OPEN, title == "Library Import", None))
+        }
+        div .section {
+            (nav_item("/activity", "Activity", icons::ACTIVITY, title == "Activity", Some("activity")))
+            (nav_item("/wanted", "Wanted", icons::HEART, title == "Wanted", Some("wanted")))
+        }
+        div .section {
+            (nav_item("/settings", "Settings", icons::GEAR, settings, None))
+            @if settings {
+                div .subnav {
+                    (sub_item("/settings?tab=plugins", "Plugins", title == "Plugins" || title == "Settings"))
+                    (sub_item("/settings?tab=users", "Users", title == "Users" || title == "Account"))
+                    (sub_item("/settings?tab=general", "General", title == "General"))
+                }
+            }
+            (nav_item("/system", "System", icons::MONITOR, title == "System", None))
+        }
     };
     shell(
         title,
@@ -80,12 +131,32 @@ pub fn page(title: &str, body: Markup) -> Markup {
             header .topbar {
                 a href="/" .brand {
                     span .logo { (maud::PreEscaped(LOGO)) }
-                    span { "Shelfarrs" }
+                    h1 { "Shelfarrs" }
+                }
+                div .nav-actions {
+                    div .topsearch {
+                        span .icon { (maud::PreEscaped(icons::SEARCH)) }
+                        input type="search" name="q" placeholder="Search your library..."
+                            hx-get="/search/suggest" hx-trigger="input changed delay:250ms, focus"
+                            hx-target="#suggest" autocomplete="off";
+                        div #suggest .suggest {}
+                    }
+                    details .menu {
+                        summary .iconbtn { (maud::PreEscaped(icons::BELL)) }
+                        div .dropdown hx-get="/notif/recent" hx-trigger="load" { p .muted { "…" } }
+                    }
+                    details .menu {
+                        summary .iconbtn { (maud::PreEscaped(icons::USER)) }
+                        div .dropdown { a href="/logout" { "Logout" } }
+                    }
                 }
             }
             aside .sidebar {
                 nav { (nav) }
-                div .version { "v" (env!("CARGO_PKG_VERSION")) }
+                div .sidefoot {
+                    span { "v" (env!("CARGO_PKG_VERSION")) }
+                    a href="https://github.com/shuff57/shelfarrs" target="_blank" .srclink { (maud::PreEscaped(icons::CODE)) }
+                }
             }
             main { (body) }
         },
@@ -95,6 +166,97 @@ pub fn page(title: &str, body: Markup) -> Markup {
 /// Bare chrome (no sidebar/topbar) — the login screen.
 pub fn page_bare(title: &str, body: Markup) -> Markup {
     shell(title, html! { main .bare { (body) } })
+}
+
+// ---- Settings (horizontal tabs, Listenarr-style) ----
+
+#[derive(serde::Deserialize)]
+pub struct TabQ {
+    tab: Option<String>,
+}
+
+async fn settings_page(
+    State(state): State<AppState>,
+    Extension(me): Extension<auth::CurrentUser>,
+    Query(q): Query<TabQ>,
+) -> Html<String> {
+    let tab = q.tab.as_deref().unwrap_or("plugins");
+    let (title, content) = match tab {
+        "users" => ("Users", auth::users_body(&state, &me).await),
+        "general" => ("General", general_body(&state)),
+        _ => ("Plugins", install::plugins_body(&state).await),
+    };
+    let tab_link = |t: &str, icon: &str, label: &str| {
+        html! {
+            a .tab .active[t == tab || (t == "plugins" && tab != "users" && tab != "general")]
+                href={ "/settings?tab=" (t) } {
+                span .icon { (maud::PreEscaped(icon)) }
+                (label)
+            }
+        }
+    };
+    let body = html! {
+        header .pagehead { span .ph-icon { (maud::PreEscaped(icons::GEAR)) } h1 { "Settings" } }
+        div .tabs {
+            (tab_link("plugins", icons::BOOKS, "Plugins"))
+            (tab_link("users", icons::USER, "Users"))
+            (tab_link("general", icons::GEAR, "General"))
+        }
+        div .tab-panel { (content) }
+    };
+    Html(page(title, body).into_string())
+}
+
+fn general_body(state: &AppState) -> Markup {
+    html! {
+        h2 { "Paths" }
+        div .cards {
+            div .statcard { span .k { "Books folder" } span .v { code { (state.books_dir.display()) } } }
+            div .statcard { span .k { "Plugins folder" } span .v { code { (state.plugins_dir.display()) } } }
+            div .statcard { span .k { "Covers folder" } span .v { code { (state.covers_dir.display()) } } }
+        }
+        h2 { "Access" }
+        div .cards {
+            div .statcard { span .k { "OPDS catalog" } span .v { code { "/opds" } " (HTTP Basic)" } }
+            div .statcard { span .k { "Version" } span .v { "v" (env!("CARGO_PKG_VERSION")) } }
+        }
+    }
+}
+
+// ---- System (status cards, Listenarr-style) ----
+
+async fn system_page(State(state): State<AppState>) -> Html<String> {
+    let count = |sql: &str| {
+        let pool = state.pool.clone();
+        let sql = sql.to_string();
+        async move {
+            sqlx::query_scalar::<_, i64>(&sql).fetch_one(&pool).await.unwrap_or(0)
+        }
+    };
+    let books = count("SELECT COUNT(*) FROM books").await;
+    let failed = count("SELECT COUNT(*) FROM jobs WHERE status='failed'").await;
+    let done = count("SELECT COUNT(*) FROM jobs WHERE status='done'").await;
+    let users = count("SELECT COUNT(*) FROM users").await;
+    let plugins = plugin::scan_installed(&state.plugins_dir).len();
+    let db_kb = std::env::var("DATA_DIR")
+        .ok()
+        .and_then(|d| std::fs::metadata(format!("{d}/shelfarr.db")).ok())
+        .or_else(|| std::fs::metadata("data/shelfarr.db").ok())
+        .map(|m| m.len() / 1024)
+        .unwrap_or(0);
+    let body = html! {
+        header .pagehead { span .ph-icon { (maud::PreEscaped(icons::MONITOR)) } h1 { "System" } }
+        h2 { "Status" }
+        div .cards {
+            div .statcard { span .k { "Version" } span .v { "v" (env!("CARGO_PKG_VERSION")) } }
+            div .statcard { span .k { "Books" } span .v { (books) } }
+            div .statcard { span .k { "Plugins installed" } span .v { (plugins) } }
+            div .statcard { span .k { "Users" } span .v { (users) } }
+            div .statcard { span .k { "Database" } span .v { (db_kb) " KB" } }
+            div .statcard .warn[failed > 0] { span .k { "Jobs" } span .v { (done) " done · " (failed) " failed" } }
+        }
+    };
+    Html(page("System", body).into_string())
 }
 
 fn shell(title: &str, content: Markup) -> Markup {
@@ -203,7 +365,13 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/", get(books::library))
-        .route("/discover", get(books::discover))
+        .route("/collection/{kind}/{name}", get(books::collection))
+        .route("/add-new", get(books::discover))
+        .route("/discover", get(|| async { axum::response::Redirect::permanent("/add-new") }))
+        .route("/calendar", get(books::calendar))
+        .route("/library-import", get(books::library_import))
+        .route("/library-import/scan", post(books::scan_now))
+        .route("/activity", get(jobs::activity_page))
         .route("/add", post(books::add))
         .route("/books/{id}", get(books::book_detail))
         .route("/books/{id}/file", get(books::book_file))
@@ -211,10 +379,16 @@ async fn main() -> anyhow::Result<()> {
         .route("/read/{id}", get(reader::read))
         .route("/progress/{id}", post(reader::save_progress))
         .route("/opds", get(opds::feed))
-        .route("/following", get(discovery::following))
+        .route("/nav/badge/{id}", get(jobs::nav_badge))
+        .route("/search/suggest", get(books::search_suggest))
+        .route("/notif/recent", get(jobs::notif_recent))
+        .route("/system", get(system_page))
+        .route("/wanted", get(discovery::following))
+        .route("/following", get(|| async { axum::response::Redirect::permanent("/wanted") }))
         .route("/following/add", post(discovery::follow_add))
         .route("/following/remove", post(discovery::follow_remove))
         .route("/following/import", post(discovery::import_list))
+        .route("/settings", get(settings_page))
         .route("/settings/plugins", get(install::plugins_page))
         .route("/settings/plugins/install", post(install::install))
         .route("/settings/plugins/uninstall", post(install::uninstall_handler))
