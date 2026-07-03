@@ -610,7 +610,7 @@ pub async fn search_suggest(State(state): State<AppState>, Query(sq): Query<Sugg
     Html(m.into_string())
 }
 
-fn urlenc(s: &str) -> String {
+pub(crate) fn urlenc(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
@@ -836,6 +836,11 @@ pub async fn discover(State(state): State<AppState>, Query(dq): Query<DiscoverQ>
         .fetch_all(&state.pool)
         .await
         .unwrap_or_default();
+    let releases = if query.trim().is_empty() {
+        vec![]
+    } else {
+        crate::indexer::search_all(&state, &query).await
+    };
     let body = html! {
         header .pagehead {
             span .ph-icon { (maud::PreEscaped(crate::icons::PLUS)) }
@@ -849,15 +854,16 @@ pub async fn discover(State(state): State<AppState>, Query(dq): Query<DiscoverQ>
             div .empty-state {
                 span .eicon { (maud::PreEscaped(crate::icons::SEARCH)) }
                 p .empty-title { "Search for a new book" }
-                p .empty-message { "Results come from your installed source plugins." }
+                p .empty-message { "Results come from your source plugins and configured indexers." }
             }
-        } @else if candidates.is_empty() {
+        } @else if candidates.is_empty() && releases.is_empty() {
             div .empty-state {
                 span .eicon { (maud::PreEscaped(crate::icons::BOOK_OPEN)) }
                 p .empty-title { "No results" }
                 p .empty-message { "Try a different title or author." }
             }
         } @else {
+            @if !candidates.is_empty() { h2 { "Direct sources" } }
             section .result-cards {
                 @for c in &candidates {
                     div .result-card {
@@ -880,6 +886,29 @@ pub async fn discover(State(state): State<AppState>, Query(dq): Query<DiscoverQ>
                                     input type="hidden" name="format" value=(c.format);
                                     input type="hidden" name="reference" value=(c.reference);
                                     button type="submit" .btn { "+ Add to Library" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            @if !releases.is_empty() {
+                h2 { "Releases (" (releases.len()) ")" }
+                table .arr-table {
+                    thead { tr { th { "Title" } th { "Indexer" } th { "Protocol" } th { "Size" } th { "Seeders" } th {} } }
+                    tbody {
+                        @for r in &releases {
+                            tr {
+                                td .t-title { (r.title) }
+                                td .t-muted { (r.indexer) }
+                                td { span .chip { (r.protocol) } }
+                                td .t-muted { @if let Some(s) = r.size { (crate::indexer::fmt_size(s)) } @else { "—" } }
+                                td .t-muted { @if let Some(s) = r.seeders { (s) } @else { "—" } }
+                                td {
+                                    form hx-post="/grab" hx-swap="outerHTML" hx-target="this" .addform {
+                                        input type="hidden" name="payload" value=(serde_json::to_string(r).unwrap_or_default());
+                                        button type="submit" .btn .btn-sm { "Grab" }
+                                    }
                                 }
                             }
                         }

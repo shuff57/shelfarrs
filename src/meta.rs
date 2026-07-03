@@ -276,7 +276,7 @@ fn find_tag(xml: &str, tag: &str) -> Option<String> {
 }
 
 /// Every `<tag ...>` occurrence in document order.
-fn all_tags(xml: &str, tag: &str) -> Vec<String> {
+pub(crate) fn all_tags(xml: &str, tag: &str) -> Vec<String> {
     let needle = format!("<{tag}");
     let mut out = vec![];
     let mut at = 0;
@@ -298,7 +298,7 @@ fn all_tags(xml: &str, tag: &str) -> Vec<String> {
 }
 
 /// Text content of the first non-empty `<tag ...>text</tag>`.
-fn tag_text(xml: &str, tag: &str) -> Option<String> {
+pub(crate) fn tag_text(xml: &str, tag: &str) -> Option<String> {
     let needle = format!("<{tag}");
     let close = format!("</{tag}");
     let mut at = 0;
@@ -325,14 +325,14 @@ fn tag_text(xml: &str, tag: &str) -> Option<String> {
 }
 
 /// `name="value"` attribute from a raw tag string.
-fn attr(tag: &str, name: &str) -> Option<String> {
+pub(crate) fn attr(tag: &str, name: &str) -> Option<String> {
     let needle = format!("{name}=\"");
     let i = tag.find(&needle)? + needle.len();
     let end = tag[i..].find('"')? + i;
     Some(unescape(&tag[i..end]))
 }
 
-fn unescape(s: &str) -> String {
+pub(crate) fn unescape(s: &str) -> String {
     s.replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">")

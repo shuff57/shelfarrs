@@ -1,6 +1,7 @@
 mod auth;
 mod books;
 mod discovery;
+mod indexer;
 mod install;
 mod jobs;
 mod meta;
@@ -94,7 +95,8 @@ fn sub_item(href: &str, label: &str, active: bool) -> Markup {
 /// nav item and sub-menus are inferred from the page title.
 pub fn page(title: &str, body: Markup) -> Markup {
     let lib = matches!(title, "Library" | "Authors" | "Series" | "Collection");
-    let settings = matches!(title, "Settings" | "Plugins" | "Users" | "Account" | "General");
+    let settings =
+        matches!(title, "Settings" | "Plugins" | "Indexers" | "Users" | "Account" | "General");
     let nav = html! {
         div .section {
             (nav_item("/?group=books", "Books", icons::BOOKS, lib, None))
@@ -118,6 +120,7 @@ pub fn page(title: &str, body: Markup) -> Markup {
             @if settings {
                 div .subnav {
                     (sub_item("/settings?tab=plugins", "Plugins", title == "Plugins" || title == "Settings"))
+                    (sub_item("/settings?tab=indexers", "Indexers", title == "Indexers"))
                     (sub_item("/settings?tab=users", "Users", title == "Users" || title == "Account"))
                     (sub_item("/settings?tab=general", "General", title == "General"))
                 }
@@ -173,6 +176,7 @@ pub fn page_bare(title: &str, body: Markup) -> Markup {
 #[derive(serde::Deserialize)]
 pub struct TabQ {
     tab: Option<String>,
+    preset: Option<String>,
 }
 
 async fn settings_page(
@@ -181,15 +185,17 @@ async fn settings_page(
     Query(q): Query<TabQ>,
 ) -> Html<String> {
     let tab = q.tab.as_deref().unwrap_or("plugins");
+    let known = ["plugins", "indexers", "users", "general"];
+    let tab = if known.contains(&tab) { tab } else { "plugins" };
     let (title, content) = match tab {
+        "indexers" => ("Indexers", indexer::indexers_body(&state, q.preset.as_deref()).await),
         "users" => ("Users", auth::users_body(&state, &me).await),
         "general" => ("General", general_body(&state)),
         _ => ("Plugins", install::plugins_body(&state).await),
     };
     let tab_link = |t: &str, icon: &str, label: &str| {
         html! {
-            a .tab .active[t == tab || (t == "plugins" && tab != "users" && tab != "general")]
-                href={ "/settings?tab=" (t) } {
+            a .tab .active[t == tab] href={ "/settings?tab=" (t) } {
                 span .icon { (maud::PreEscaped(icon)) }
                 (label)
             }
@@ -199,6 +205,7 @@ async fn settings_page(
         header .pagehead { span .ph-icon { (maud::PreEscaped(icons::GEAR)) } h1 { "Settings" } }
         div .tabs {
             (tab_link("plugins", icons::BOOKS, "Plugins"))
+            (tab_link("indexers", icons::SEARCH, "Indexers"))
             (tab_link("users", icons::USER, "Users"))
             (tab_link("general", icons::GEAR, "General"))
         }
@@ -373,6 +380,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/library-import/scan", post(books::scan_now))
         .route("/activity", get(jobs::activity_page))
         .route("/add", post(books::add))
+        .route("/grab", post(indexer::grab))
         .route("/books/{id}", get(books::book_detail))
         .route("/books/{id}/edit", post(books::book_edit))
         .route("/books/{id}/delete", post(books::book_delete))
@@ -391,6 +399,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/following/remove", post(discovery::follow_remove))
         .route("/following/import", post(discovery::import_list))
         .route("/settings", get(settings_page))
+        .route("/settings/indexers/add", post(indexer::add))
+        .route("/settings/indexers/delete", post(indexer::delete))
+        .route("/settings/indexers/toggle", post(indexer::toggle))
+        .route("/settings/indexers/test", post(indexer::test_handler))
         .route("/settings/plugins", get(install::plugins_page))
         .route("/settings/plugins/install", post(install::install))
         .route("/settings/plugins/uninstall", post(install::uninstall_handler))
