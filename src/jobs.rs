@@ -119,6 +119,12 @@ pub async fn activity_page(State(state): State<AppState>, Query(q): Query<Activi
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
+    let dls = sqlx::query(
+        "SELECT title, protocol, state, progress, error, updated_at FROM downloads ORDER BY id DESC LIMIT 100",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
     let filter = q.f.unwrap_or_default().to_lowercase();
 
     let body = html! {
@@ -129,6 +135,37 @@ pub async fn activity_page(State(state): State<AppState>, Query(q): Query<Activi
                 input type="search" name="f" value=(filter) placeholder="Filter activity...";
             }
             a .toolbar-btn href="/activity" { span .icon { (maud::PreEscaped(crate::icons::REFRESH)) } "Refresh" }
+        }
+        @if !dls.is_empty() {
+            h2 { "Downloads" }
+            table .arr-table {
+                thead { tr { th { "Title" } th { "Protocol" } th { "Progress" } th { "Updated" } th { "Status" } } }
+                tbody {
+                    @for d in &dls {
+                        @let title: String = d.get("title");
+                        @let st: String = d.get("state");
+                        @let progress: f64 = d.get("progress");
+                        @let error: Option<String> = d.get("error");
+                        @let class = match st.as_str() {
+                            "queued" => "queued",
+                            "downloading" => "downloading",
+                            "completed" | "importing" => "processing",
+                            "imported" => "completed",
+                            _ => "failed",
+                        };
+                        @if filter.is_empty() || title.to_lowercase().contains(&filter) {
+                            tr {
+                                td .t-title { (title) }
+                                td .t-muted { (d.get::<String, _>("protocol")) }
+                                td { div .progress { div .bar .{ "p-" (class) } style={ "width:" ((progress * 100.0) as i64) "%" } {} } }
+                                td .t-muted { (d.get::<String, _>("updated_at")) }
+                                td { span .status-badge .{ (class) } title=[error] { (st) } }
+                            }
+                        }
+                    }
+                }
+            }
+            h2 { "Jobs" }
         }
         @if rows.is_empty() {
             div .empty-state {
@@ -169,10 +206,20 @@ pub async fn activity_page(State(state): State<AppState>, Query(q): Query<Activi
 /// Sidebar count pills, loaded via HTMX. Empty response = no pill.
 pub async fn nav_badge(State(state): State<AppState>, Path(id): Path<String>) -> Html<String> {
     let n: i64 = match id.as_str() {
-        "activity" => sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','running')")
+        "activity" => {
+            let jobs: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','running')")
+                    .fetch_one(&state.pool)
+                    .await
+                    .unwrap_or(0);
+            let dls: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM downloads WHERE state IN ('queued','downloading','completed','importing')",
+            )
             .fetch_one(&state.pool)
             .await
-            .unwrap_or(0),
+            .unwrap_or(0);
+            jobs + dls
+        }
         "wanted" => sqlx::query_scalar(
             "SELECT COUNT(*) FROM jobs WHERE kind='acquire' AND status IN ('queued','running')",
         )

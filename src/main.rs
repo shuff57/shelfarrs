@@ -1,6 +1,7 @@
 mod auth;
 mod books;
 mod discovery;
+mod downloads;
 mod indexer;
 mod install;
 mod jobs;
@@ -95,8 +96,10 @@ fn sub_item(href: &str, label: &str, active: bool) -> Markup {
 /// nav item and sub-menus are inferred from the page title.
 pub fn page(title: &str, body: Markup) -> Markup {
     let lib = matches!(title, "Library" | "Authors" | "Series" | "Collection");
-    let settings =
-        matches!(title, "Settings" | "Plugins" | "Indexers" | "Users" | "Account" | "General");
+    let settings = matches!(
+        title,
+        "Settings" | "Plugins" | "Indexers" | "Download Clients" | "Users" | "Account" | "General"
+    );
     let nav = html! {
         div .section {
             (nav_item("/?group=books", "Books", icons::BOOKS, lib, None))
@@ -121,6 +124,7 @@ pub fn page(title: &str, body: Markup) -> Markup {
                 div .subnav {
                     (sub_item("/settings?tab=plugins", "Plugins", title == "Plugins" || title == "Settings"))
                     (sub_item("/settings?tab=indexers", "Indexers", title == "Indexers"))
+                    (sub_item("/settings?tab=clients", "Download Clients", title == "Download Clients"))
                     (sub_item("/settings?tab=users", "Users", title == "Users" || title == "Account"))
                     (sub_item("/settings?tab=general", "General", title == "General"))
                 }
@@ -185,10 +189,11 @@ async fn settings_page(
     Query(q): Query<TabQ>,
 ) -> Html<String> {
     let tab = q.tab.as_deref().unwrap_or("plugins");
-    let known = ["plugins", "indexers", "users", "general"];
+    let known = ["plugins", "indexers", "clients", "users", "general"];
     let tab = if known.contains(&tab) { tab } else { "plugins" };
     let (title, content) = match tab {
         "indexers" => ("Indexers", indexer::indexers_body(&state, q.preset.as_deref()).await),
+        "clients" => ("Download Clients", downloads::clients_body(&state).await),
         "users" => ("Users", auth::users_body(&state, &me).await),
         "general" => ("General", general_body(&state)),
         _ => ("Plugins", install::plugins_body(&state).await),
@@ -206,6 +211,7 @@ async fn settings_page(
         div .tabs {
             (tab_link("plugins", icons::BOOKS, "Plugins"))
             (tab_link("indexers", icons::SEARCH, "Indexers"))
+            (tab_link("clients", icons::FOLDER_OPEN, "Download Clients"))
             (tab_link("users", icons::USER, "Users"))
             (tab_link("general", icons::GEAR, "General"))
         }
@@ -366,9 +372,10 @@ async fn main() -> anyhow::Result<()> {
         http,
     };
 
-    // Kick off an initial library scan and start the worker.
+    // Kick off an initial library scan and start the workers.
     jobs::enqueue(&state.pool, "scan", &serde_json::json!({})).await?;
     tokio::spawn(jobs::worker(state.clone()));
+    tokio::spawn(downloads::monitor(state.clone()));
 
     let app = Router::new()
         .route("/", get(books::library))
@@ -399,6 +406,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/following/remove", post(discovery::follow_remove))
         .route("/following/import", post(discovery::import_list))
         .route("/settings", get(settings_page))
+        .route("/settings/clients/add", post(downloads::add))
+        .route("/settings/clients/delete", post(downloads::delete))
+        .route("/settings/clients/test", post(downloads::test_handler))
+        .route("/settings/clients/mappings/add", post(downloads::mapping_add))
+        .route("/settings/clients/mappings/delete", post(downloads::mapping_delete))
         .route("/settings/indexers/add", post(indexer::add))
         .route("/settings/indexers/delete", post(indexer::delete))
         .route("/settings/indexers/toggle", post(indexer::toggle))

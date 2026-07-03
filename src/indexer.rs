@@ -356,10 +356,9 @@ pub struct GrabForm {
     pub payload: String,
 }
 
-/// Grab a release. Until B3 lands a download client, this reports the gap
-/// instead of silently failing.
+/// Grab a release: hand it to the matching download client (B3).
 pub async fn grab(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Extension(me): Extension<CurrentUser>,
     Form(f): Form<GrabForm>,
 ) -> Response {
@@ -369,10 +368,10 @@ pub async fn grab(
     let Ok(rel) = serde_json::from_str::<Release>(&f.payload) else {
         return Html("<span class=\"err\">bad release payload</span>".to_string()).into_response();
     };
-    // ponytail: no download clients yet (B3) — surface that instead of a dead button.
-    tracing::info!("grab requested (no client yet): {}", rel.title);
-    Html("<span class=\"err\">No download client configured (Settings → coming in B3)</span>".to_string())
-        .into_response()
+    match crate::downloads::grab_release(&state, &rel).await {
+        Ok(_) => Html("<span class=\"queued\">Grabbed ✓</span>".to_string()).into_response(),
+        Err(e) => Html(format!("<span class=\"err\">{e}</span>")).into_response(),
+    }
 }
 
 /// Human-readable size for release tables.
