@@ -9,6 +9,7 @@ mod jobs;
 mod meta;
 mod opds;
 mod plugin;
+mod providers;
 mod reader;
 mod score;
 mod source;
@@ -193,6 +194,37 @@ pub struct TabQ {
     preset: Option<String>,
 }
 
+#[derive(serde::Deserialize)]
+struct MetaToggleForm {
+    meta_openlibrary: Option<String>,
+    meta_googlebooks: Option<String>,
+}
+
+async fn metadata_toggles(
+    State(state): State<AppState>,
+    Extension(me): Extension<auth::CurrentUser>,
+    axum::Form(f): axum::Form<MetaToggleForm>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Some(r) = auth::deny_non_admin(&me) {
+        return r;
+    }
+    for (key, on) in [
+        ("meta_openlibrary", f.meta_openlibrary.is_some()),
+        ("meta_googlebooks", f.meta_googlebooks.is_some()),
+    ] {
+        let _ = sqlx::query(
+            "INSERT INTO settings (key,value) VALUES (?,?)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        )
+        .bind(key)
+        .bind(if on { "1" } else { "0" })
+        .execute(&state.pool)
+        .await;
+    }
+    axum::response::Redirect::to("/settings?tab=general").into_response()
+}
+
 async fn settings_page(
     State(state): State<AppState>,
     Extension(me): Extension<auth::CurrentUser>,
@@ -206,7 +238,7 @@ async fn settings_page(
         "clients" => ("Download Clients", downloads::clients_body(&state).await),
         "profiles" => ("Quality Profiles", score::profiles_body(&state).await),
         "users" => ("Users", auth::users_body(&state, &me).await),
-        "general" => ("General", general_body(&state)),
+        "general" => ("General", general_body(&state).await),
         _ => ("Plugins", install::plugins_body(&state).await),
     };
     let tab_link = |t: &str, icon: &str, label: &str| {
@@ -232,8 +264,17 @@ async fn settings_page(
     Html(page(title, body).into_string())
 }
 
-fn general_body(state: &AppState) -> Markup {
+async fn general_body(state: &AppState) -> Markup {
+    let ol = providers::enabled(state, "meta_openlibrary").await;
+    let gb = providers::enabled(state, "meta_googlebooks").await;
     html! {
+        h2 { "Metadata providers" }
+        p .muted { "Fill descriptions, covers and ISBNs the book file itself lacks; also power per-book rescans." }
+        form .editform action="/settings/general/metadata" method="post" {
+            label .check { input type="checkbox" name="meta_openlibrary" value="1" checked[ol]; " OpenLibrary" }
+            label .check { input type="checkbox" name="meta_googlebooks" value="1" checked[gb]; " Google Books" }
+            button .btn type="submit" { "Save" }
+        }
         h2 { "Paths" }
         div .cards {
             div .statcard { span .k { "Books folder" } span .v { code { (state.books_dir.display()) } } }
@@ -404,6 +445,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/books/{id}", get(books::book_detail))
         .route("/books/{id}/edit", post(books::book_edit))
         .route("/books/{id}/delete", post(books::book_delete))
+        .route("/books/{id}/rescan", post(books::book_rescan))
+        .route("/settings/general/metadata", post(metadata_toggles))
         .route("/books/{id}/file", get(books::book_file))
         .route("/books/{id}/cover", get(books::book_cover))
         .route("/read/{id}", get(reader::read))

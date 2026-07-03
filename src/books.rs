@@ -30,10 +30,11 @@ pub struct Book {
     pub series: Option<String>,
     pub series_index: Option<f64>,
     pub monitored: i64,
+    pub isbn: Option<String>,
 }
 
 const BOOK_COLS: &str =
-    "id,title,author,format,size,description,cover,series,series_index,monitored";
+    "id,title,author,format,size,description,cover,series,series_index,monitored,isbn";
 
 const BOOK_EXTS: &[&str] = &["epub", "pdf", "cbz", "cbr", "mobi", "azw3", "txt"];
 
@@ -659,6 +660,7 @@ pub async fn book_detail(State(state): State<AppState>, Path(id): Path<i64>) -> 
                     label { "Series" } input type="text" name="series" value=[b.series.as_deref()];
                     label { "Series #" } input type="number" step="0.1" name="series_index"
                         value=[b.series_index.map(fmt_index)];
+                    label { "ISBN" } input type="text" name="isbn" value=[b.isbn.as_deref()];
                     label { "Description" } textarea .ta name="description" rows="4" {
                         (b.description.clone().unwrap_or_default())
                     }
@@ -668,6 +670,9 @@ pub async fn book_detail(State(state): State<AppState>, Path(id): Path<i64>) -> 
                     }
                     button .btn type="submit" { "Save" }
                 }
+            }
+            form .inline hx-post={ "/books/" (b.id) "/rescan" } hx-swap="outerHTML" hx-target="this" {
+                button .toolbar-btn type="submit" { "Rescan metadata" }
             }
             details .panel {
                 summary .toolbar-btn .danger-text { "Delete" }
@@ -692,6 +697,7 @@ pub struct EditForm {
     pub author: Option<String>,
     pub series: Option<String>,
     pub series_index: Option<String>,
+    pub isbn: Option<String>,
     pub description: Option<String>,
     pub monitored: Option<String>, // checkbox: present = on
 }
@@ -710,18 +716,40 @@ pub async fn book_edit(
     let idx: Option<f64> = none_if_blank(f.series_index).and_then(|s| s.parse().ok());
     let _ = sqlx::query(
         "UPDATE books SET title=COALESCE(?,title), author=?, series=?, series_index=?,
-         description=?, monitored=? WHERE id=?",
+         isbn=?, description=?, monitored=? WHERE id=?",
     )
     .bind(none_if_blank(f.title))
     .bind(none_if_blank(f.author))
     .bind(none_if_blank(f.series))
     .bind(idx)
+    .bind(none_if_blank(f.isbn))
     .bind(none_if_blank(f.description))
     .bind(if f.monitored.is_some() { 1i64 } else { 0 })
     .bind(id)
     .execute(&state.pool)
     .await;
     Redirect::to(&format!("/books/{id}")).into_response()
+}
+
+/// Re-match: clear derived metadata and re-run extraction + providers.
+pub async fn book_rescan(
+    State(state): State<AppState>,
+    axum::Extension(me): axum::Extension<crate::auth::CurrentUser>,
+    Path(id): Path<i64>,
+) -> Response {
+    if let Some(r) = crate::auth::deny_non_admin(&me) {
+        return r;
+    }
+    let _ = sqlx::query(
+        "UPDATE books SET description=NULL, cover=NULL, series=NULL, series_index=NULL,
+         isbn=NULL, meta_done=0 WHERE id=?",
+    )
+    .bind(id)
+    .execute(&state.pool)
+    .await;
+    let n = crate::meta::enrich_pending(&state).await;
+    Html(format!("<span class=\"queued\">Rescanned ({n}) ✓ — reload to see changes</span>"))
+        .into_response()
 }
 
 #[derive(Deserialize)]

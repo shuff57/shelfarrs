@@ -35,10 +35,11 @@ pub fn extract(path: &Path, format: &str) -> Extracted {
     })
 }
 
-/// Enrich every book not yet metadata-scanned; marks each done regardless of
-/// outcome so failures don't rescan forever. Returns how many were processed.
+/// Enrich every book not yet metadata-scanned: file-embedded extraction first,
+/// then online providers (B5) for whatever the file lacks. Marks each done
+/// regardless of outcome so failures don't rescan forever.
 pub async fn enrich_pending(state: &AppState) -> usize {
-    let rows = sqlx::query("SELECT id, path, format FROM books WHERE meta_done=0")
+    let rows = sqlx::query("SELECT id, path, format, title, author FROM books WHERE meta_done=0")
         .fetch_all(&state.pool)
         .await
         .unwrap_or_default();
@@ -47,7 +48,7 @@ pub async fn enrich_pending(state: &AppState) -> usize {
         let id: i64 = r.get("id");
         let path: String = r.get("path");
         let format: String = r.get("format");
-        let ex = extract(Path::new(&path), &format);
+        let mut ex = extract(Path::new(&path), &format);
 
         let mut cover_name: Option<String> = None;
         if let Some((bytes, ext)) = &ex.cover {
@@ -58,12 +59,38 @@ pub async fn enrich_pending(state: &AppState) -> usize {
             }
         }
 
+        // Online providers fill the gaps the file left (description, cover, isbn).
+        let mut isbn: Option<String> = None;
+        if ex.description.is_none() || cover_name.is_none() {
+            let title = ex.title.clone().unwrap_or_else(|| r.get("title"));
+            let author = ex.author.clone().or_else(|| r.get("author"));
+            if let Some(pm) = crate::providers::lookup(state, &title, author.as_deref()).await {
+                if ex.description.is_none() {
+                    ex.description = pm.description;
+                }
+                isbn = pm.isbn;
+                if cover_name.is_none() {
+                    if let Some(url) = pm.cover_url {
+                        if let Ok(resp) = state.http.get(&url).send().await {
+                            if let Ok(bytes) = resp.bytes().await {
+                                let name = format!("{id}.jpg");
+                                if std::fs::write(state.covers_dir.join(&name), &bytes).is_ok() {
+                                    cover_name = Some(name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Extracted fields win when present (epub metadata beats a filename);
         // NULLs keep whatever the scan or source candidate provided.
         if let Err(e) = sqlx::query(
             "UPDATE books SET title=COALESCE(?,title), author=COALESCE(?,author),
              description=COALESCE(?,description), cover=COALESCE(?,cover),
-             series=COALESCE(?,series), series_index=COALESCE(?,series_index), meta_done=1
+             series=COALESCE(?,series), series_index=COALESCE(?,series_index),
+             isbn=COALESCE(?,isbn), meta_done=1
              WHERE id=?",
         )
         .bind(&ex.title)
@@ -72,6 +99,7 @@ pub async fn enrich_pending(state: &AppState) -> usize {
         .bind(&cover_name)
         .bind(&ex.series)
         .bind(ex.series_index)
+        .bind(&isbn)
         .bind(id)
         .execute(&state.pool)
         .await
