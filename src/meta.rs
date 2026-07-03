@@ -15,6 +15,8 @@ pub struct Extracted {
     pub title: Option<String>,
     pub author: Option<String>,
     pub description: Option<String>,
+    pub series: Option<String>,
+    pub series_index: Option<f64>,
     /// (bytes, file extension)
     pub cover: Option<(Vec<u8>, String)>,
 }
@@ -60,13 +62,16 @@ pub async fn enrich_pending(state: &AppState) -> usize {
         // NULLs keep whatever the scan or source candidate provided.
         if let Err(e) = sqlx::query(
             "UPDATE books SET title=COALESCE(?,title), author=COALESCE(?,author),
-             description=COALESCE(?,description), cover=COALESCE(?,cover), meta_done=1
+             description=COALESCE(?,description), cover=COALESCE(?,cover),
+             series=COALESCE(?,series), series_index=COALESCE(?,series_index), meta_done=1
              WHERE id=?",
         )
         .bind(&ex.title)
         .bind(&ex.author)
         .bind(&ex.description)
         .bind(&cover_name)
+        .bind(&ex.series)
+        .bind(ex.series_index)
         .bind(id)
         .execute(&state.pool)
         .await
@@ -89,10 +94,13 @@ fn extract_epub(path: &Path) -> Result<Extracted> {
     let opf = read_string(&mut zip, &rootfile)?;
     let opf_dir = Path::new(&rootfile).parent().unwrap_or(Path::new(""));
 
+    let (series, series_index) = series_from_opf(&opf);
     let mut ex = Extracted {
         title: tag_text(&opf, "dc:title"),
         author: tag_text(&opf, "dc:creator"),
         description: tag_text(&opf, "dc:description").map(|d| strip_tags(&d)),
+        series,
+        series_index,
         cover: None,
     };
 
@@ -105,6 +113,71 @@ fn extract_epub(path: &Path) -> Result<Extracted> {
         }
     }
     Ok(ex)
+}
+
+/// Series name + position: Calibre's `calibre:series[_index]` metas, else the
+/// epub3 `belongs-to-collection` property with its `group-position` refine.
+fn series_from_opf(opf: &str) -> (Option<String>, Option<f64>) {
+    let metas = meta_elements(opf);
+    let by_name = |n: &str| {
+        metas
+            .iter()
+            .find(|(t, _)| attr(t, "name").as_deref() == Some(n))
+            .and_then(|(t, _)| attr(t, "content"))
+    };
+    let mut name = by_name("calibre:series");
+    let mut idx: Option<f64> = by_name("calibre:series_index").and_then(|s| s.parse().ok());
+
+    if name.is_none() {
+        if let Some((tag, text)) =
+            metas.iter().find(|(t, _)| attr(t, "property").as_deref() == Some("belongs-to-collection"))
+        {
+            let t = unescape(text.trim());
+            if !t.is_empty() {
+                name = Some(t);
+                if let Some(id) = attr(tag, "id") {
+                    let refines = format!("#{id}");
+                    idx = metas
+                        .iter()
+                        .find(|(t, _)| {
+                            attr(t, "refines").as_deref() == Some(refines.as_str())
+                                && attr(t, "property").as_deref() == Some("group-position")
+                        })
+                        .and_then(|(_, x)| x.trim().parse().ok());
+                }
+            }
+        }
+    }
+    (name, idx)
+}
+
+/// Every `<meta ...>` element as (opening tag, inner text — empty when self-closing).
+fn meta_elements(xml: &str) -> Vec<(String, String)> {
+    let mut out = vec![];
+    let mut at = 0;
+    while let Some(i) = xml[at..].find("<meta") {
+        let start = at + i;
+        let after = start + 5;
+        at = after;
+        match xml.as_bytes().get(after) {
+            Some(b) if b.is_ascii_whitespace() || *b == b'>' || *b == b'/' => {}
+            _ => continue,
+        }
+        let Some(gt) = xml[start..].find('>') else { break };
+        let open_end = start + gt + 1;
+        let tag = xml[start..open_end].to_string();
+        let inner = if tag.ends_with("/>") {
+            String::new()
+        } else {
+            xml[open_end..]
+                .find("</meta")
+                .map(|c| xml[open_end..open_end + c].to_string())
+                .unwrap_or_default()
+        };
+        out.push((tag, inner));
+        at = open_end;
+    }
+    out
 }
 
 /// The cover image href from an OPF manifest: epub3 `properties="cover-image"`,
@@ -339,6 +412,27 @@ mod tests {
         assert_eq!(bytes, b"JPEGBYTES");
         assert_eq!(ext, "jpg");
         std::fs::remove_file(p).ok();
+    }
+
+    #[test]
+    fn series_calibre_and_epub3() {
+        let calibre = r#"<metadata>
+            <meta name="calibre:series" content="Wonderland Saga"/>
+            <meta name="calibre:series_index" content="2.0"/>
+        </metadata>"#;
+        assert_eq!(
+            series_from_opf(calibre),
+            (Some("Wonderland Saga".into()), Some(2.0))
+        );
+
+        let epub3 = r##"<metadata>
+            <meta property="belongs-to-collection" id="c01">The Empyrean</meta>
+            <meta refines="#c01" property="collection-type">series</meta>
+            <meta refines="#c01" property="group-position">3</meta>
+        </metadata>"##;
+        assert_eq!(series_from_opf(epub3), (Some("The Empyrean".into()), Some(3.0)));
+
+        assert_eq!(series_from_opf("<metadata></metadata>"), (None, None));
     }
 
     #[test]

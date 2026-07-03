@@ -304,6 +304,13 @@ code { background: var(--card); padding: .1rem .35rem; border-radius: 4px; font-
 }
 .calitem:hover { background: rgba(33, 150, 243, .3); }
 
+.seq-card { position: relative; }
+.seq-card .seq {
+  position: absolute; top: 6px; left: 6px; z-index: 2;
+  padding: .1rem .45rem; border-radius: 4px;
+  background: rgba(0, 0, 0, .75); color: #fff; font-size: .75rem; font-weight: 700;
+}
+
 /* ---- detail / collection hero ---- */
 .detail { max-width: 760px; }
 .detail img.cover { float: left; width: 190px; margin: 0 1.5rem 1rem 0; border-radius: 6px; box-shadow: 0 4px 10px rgba(0, 0, 0, .45); }

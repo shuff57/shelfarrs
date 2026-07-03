@@ -27,7 +27,11 @@ pub struct Book {
     pub size: Option<i64>,
     pub description: Option<String>,
     pub cover: Option<String>,
+    pub series: Option<String>,
+    pub series_index: Option<f64>,
 }
+
+const BOOK_COLS: &str = "id,title,author,format,size,description,cover,series,series_index";
 
 const BOOK_EXTS: &[&str] = &["epub", "pdf", "cbz", "cbr", "mobi", "azw3", "txt"];
 
@@ -140,9 +144,7 @@ pub async fn download_and_import(state: &AppState, cand: &Candidate) -> Result<(
 
 async fn all_books(state: &AppState) -> Result<Vec<Book>> {
     Ok(
-        sqlx::query_as::<_, Book>(
-            "SELECT id,title,author,format,size,description,cover FROM books ORDER BY title",
-        )
+        sqlx::query_as::<_, Book>(&format!("SELECT {BOOK_COLS} FROM books ORDER BY title"))
             .fetch_all(&state.pool)
             .await?,
     )
@@ -236,7 +238,12 @@ pub async fn library(State(state): State<AppState>, Query(q): Query<LibQ>) -> Ht
             set.dedup();
             format!("{} Authors", set.len())
         }
-        "series" => "0 Series".into(),
+        "series" => {
+            let mut set: Vec<&str> = books.iter().filter_map(|b| b.series.as_deref()).collect();
+            set.sort();
+            set.dedup();
+            format!("{} Series", set.len())
+        }
         _ => format!("{} Book{}", books.len(), if books.len() == 1 { "" } else { "s" }),
     };
     let flip = |d: &str| if d == "asc" { "desc" } else { "asc" };
@@ -319,13 +326,53 @@ pub async fn library(State(state): State<AppState>, Query(q): Query<LibQ>) -> Ht
                     }
                 }
             }
-            "series" => html! {
-                div .empty-state {
-                    span .eicon { (maud::PreEscaped(crate::icons::BOOKS)) }
-                    p .empty-title { "No series information" }
-                    p .empty-message { "Series metadata isn't extracted yet — books with series data will group here." }
+            "series" => {
+                let mut series: Vec<(String, Vec<&Book>)> = vec![];
+                for b in &books {
+                    let Some(name) = b.series.clone() else { continue };
+                    match series.iter_mut().find(|(n, _)| *n == name) {
+                        Some((_, v)) => v.push(b),
+                        None => series.push((name, vec![b])),
+                    }
                 }
-            },
+                series.sort_by(|a, b| a.0.cmp(&b.0));
+                for (_, list) in series.iter_mut() {
+                    list.sort_by(|a, b| {
+                        a.series_index
+                            .unwrap_or(f64::MAX)
+                            .total_cmp(&b.series_index.unwrap_or(f64::MAX))
+                    });
+                }
+                if series.is_empty() {
+                    html! {
+                        div .empty-state {
+                            span .eicon { (maud::PreEscaped(crate::icons::BOOKS)) }
+                            p .empty-title { "No series information" }
+                            p .empty-message { "Books whose epub metadata names a series will group here after a scan." }
+                        }
+                    }
+                } else {
+                    html! {
+                        section .grid {
+                            @for (name, list) in &series {
+                                a .card href={ "/collection/series/" (urlenc(name)) } {
+                                    div .poster {
+                                        @if let Some(c) = list.iter().find(|b| b.cover.is_some()) {
+                                            img .cover src={ "/books/" (c.id) "/cover" } alt="" loading="lazy";
+                                        } @else {
+                                            div .cover-ph { span { "—" } }
+                                        }
+                                        div .overlay { span .o-title { (name) } }
+                                        div .status-bar {}
+                                    }
+                                    span .title { (name) }
+                                    span .author { (list.len()) " book" @if list.len() != 1 { "s" } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             _ if view == "list" => html! {
                 table .arr-table {
                     thead { tr { th {} th { "Title" } th { "Author" } th { "Format" } th { "Size" } th {} } }
@@ -362,23 +409,50 @@ pub async fn collection(
     State(state): State<AppState>,
     Path((kind, name)): Path<(String, String)>,
 ) -> Html<String> {
-    let books: Vec<Book> = all_books(&state)
+    let mut books: Vec<Book> = all_books(&state)
         .await
         .unwrap_or_default()
         .into_iter()
-        .filter(|b| kind == "author" && b.author.as_deref() == Some(name.as_str()))
+        .filter(|b| match kind.as_str() {
+            "author" => b.author.as_deref() == Some(name.as_str()),
+            "series" => b.series.as_deref() == Some(name.as_str()),
+            _ => false,
+        })
         .collect();
+    if kind == "series" {
+        books.sort_by(|a, b| {
+            a.series_index
+                .unwrap_or(f64::MAX)
+                .total_cmp(&b.series_index.unwrap_or(f64::MAX))
+        });
+    }
     let body = html! {
         section .hero {
             h1 { (name) }
             p .muted { (books.len()) " book" @if books.len() != 1 { "s" } " in library" }
         }
         section .grid {
-            @for b in &books { (poster_card(b, false)) }
+            @for b in &books {
+                @if kind == "series" {
+                    div .seq-card {
+                        (poster_card(b, false))
+                        @if let Some(i) = b.series_index { span .seq { "#" (fmt_index(i)) } }
+                    }
+                } @else { (poster_card(b, false)) }
+            }
         }
         (legend())
     };
     Html(page("Collection", body).into_string())
+}
+
+/// "2" for 2.0, "2.5" for halves — series indexes are REAL for novellas.
+fn fmt_index(i: f64) -> String {
+    if i.fract() == 0.0 {
+        format!("{}", i as i64)
+    } else {
+        format!("{i}")
+    }
 }
 
 /// Month calendar of when books were added to the library.
@@ -511,10 +585,10 @@ pub async fn search_suggest(State(state): State<AppState>, Query(sq): Query<Sugg
     if q.trim().is_empty() {
         return Html(String::new());
     }
-    let rows = sqlx::query_as::<_, Book>(
-        "SELECT id,title,author,format,size,description,cover FROM books
-         WHERE title LIKE '%'||?||'%' OR author LIKE '%'||?||'%' ORDER BY title LIMIT 6",
-    )
+    let rows = sqlx::query_as::<_, Book>(&format!(
+        "SELECT {BOOK_COLS} FROM books
+         WHERE title LIKE '%'||?||'%' OR author LIKE '%'||?||'%' ORDER BY title LIMIT 6"
+    ))
     .bind(&q)
     .bind(&q)
     .fetch_all(&state.pool)
@@ -544,9 +618,7 @@ fn urlenc(s: &str) -> String {
 }
 
 pub async fn book_detail(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
-    let book = sqlx::query_as::<_, Book>(
-        "SELECT id,title,author,format,size,description,cover FROM books WHERE id=?",
-    )
+    let book = sqlx::query_as::<_, Book>(&format!("SELECT {BOOK_COLS} FROM books WHERE id=?"))
     .bind(id)
     .fetch_optional(&state.pool)
     .await
@@ -561,6 +633,12 @@ pub async fn book_detail(State(state): State<AppState>, Path(id): Path<i64>) -> 
             @if b.cover.is_some() { img .cover src={ "/books/" (b.id) "/cover" } alt=""; }
             h1 { (b.title) }
             @if let Some(a) = &b.author { p .author { (a) } }
+            @if let Some(s) = &b.series {
+                p .meta {
+                    "Series: " a href={ "/collection/series/" (urlenc(s)) } { (s) }
+                    @if let Some(i) = b.series_index { " #" (fmt_index(i)) }
+                }
+            }
             p .meta { (b.format) @if let Some(s) = b.size { " · " (s / 1024) " KB" } }
             @if let Some(d) = &b.description { p .desc { (d) } }
             p {
